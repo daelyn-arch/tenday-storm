@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-800 text-ink-100 font-body antialiased;
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.font-display {
+  font-family: 'Cinzel', Georgia, serif;
+  letter-spacing: 0.02em;
+}
+
+@layer components {
+  .btn {
+    @apply px-3 py-1.5 rounded border border-ink-400/40 bg-ink-700 hover:bg-ink-600 text-ink-100 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-primary {
+    @apply bg-storm-600 hover:bg-storm-500 border-storm-400/40;
+  }
+  .btn-danger {
+    @apply bg-red-900 hover:bg-red-800 border-red-500/40;
+  }
+  .input {
+    @apply px-2 py-1.5 rounded bg-ink-900 border border-ink-400/30 text-ink-100 text-sm w-full focus:outline-none focus:border-storm-400;
+  }
+  .label-tiny {
+    @apply text-xs uppercase tracking-wider text-ink-300 mb-1 block;
+  }
+  .panel {
+    @apply bg-ink-700/60 border border-ink-400/20 rounded-lg;
+  }
+}
