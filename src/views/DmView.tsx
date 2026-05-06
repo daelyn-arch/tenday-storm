@@ -1,22 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useCampaign } from '../store/campaign'
-import { HexMap } from '../hex/HexMap'
+import { HexMap, type Pin } from '../hex/HexMap'
 import { HexInspector } from './panels/HexInspector'
 import { QuestsPanel } from './panels/QuestsPanel'
 import { RumorsPanel } from './panels/RumorsPanel'
 import { ItemsPanel } from './panels/ItemsPanel'
+import { EncountersPanel } from './panels/EncountersPanel'
 import { RegionsPanel } from './panels/RegionsPanel'
 import { WorldPanel } from './panels/WorldPanel'
 import { JournalPanel } from './panels/JournalPanel'
 import { useCampaignChannel } from '../realtime/useCampaignChannel'
 
-type Tab = 'inspector' | 'quests' | 'rumors' | 'items' | 'regions' | 'world' | 'journal'
+type Tab = 'inspector' | 'quests' | 'rumors' | 'items' | 'encounters' | 'regions' | 'world' | 'journal'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'inspector', label: 'Hex' },
   { id: 'quests', label: 'Quests' },
   { id: 'rumors', label: 'Rumors' },
+  { id: 'encounters', label: 'Encounters' },
   { id: 'items', label: 'Items' },
   { id: 'regions', label: 'Regions' },
   { id: 'journal', label: 'Journal' },
@@ -33,7 +35,10 @@ export function DmView() {
     campaign,
     hexes,
     regions,
-    items,
+    quests,
+    rumors,
+    encounters,
+    journal,
     selected,
     setSelected,
     loading,
@@ -49,6 +54,23 @@ export function DmView() {
   }, [id, load, reset])
 
   useCampaignChannel(id ?? null)
+
+  const pins: Pin[] = useMemo(() => {
+    const out: Pin[] = []
+    for (const q of quests) {
+      if (q.target_q != null && q.target_r != null) out.push({ q: q.target_q, r: q.target_r, kind: 'quest' })
+    }
+    for (const r of rumors) {
+      if (r.target_q != null && r.target_r != null) out.push({ q: r.target_q, r: r.target_r, kind: 'rumor' })
+    }
+    for (const e of encounters) {
+      if (e.target_q != null && e.target_r != null) out.push({ q: e.target_q, r: e.target_r, kind: 'encounter' })
+    }
+    for (const j of journal) {
+      if (j.target_q != null && j.target_r != null) out.push({ q: j.target_q, r: j.target_r, kind: 'journal' })
+    }
+    return out
+  }, [quests, rumors, encounters, journal])
 
   if (loading || !campaign) {
     return (
@@ -97,23 +119,18 @@ export function DmView() {
             regions={regions}
             partyHex={{ q: campaign.party_q, r: campaign.party_r }}
             stormHex={{ q: campaign.storm_q, r: campaign.storm_r }}
-            stormPath={campaign.storm_path}
+            stormRadius={campaign.storm_radius}
+            nextStormHex={campaign.storm_path[campaign.day] ?? null}
             finalBoss={
               campaign.final_boss_q != null && campaign.final_boss_r != null
                 ? { q: campaign.final_boss_q, r: campaign.final_boss_r }
                 : null
             }
-            items={items.map((it) => ({
-              name: it.name,
-              hex_q: it.hex_q,
-              hex_r: it.hex_r,
-              is_real: it.is_real,
-              discovered: it.discovered,
-            }))}
+            pins={pins}
             selected={selected}
-            onSelect={(q, r) => {
-              setSelected({ q, r })
-              setTab('inspector')
+            onSelect={(next) => {
+              setSelected(next)
+              if (next) setTab('inspector')
             }}
             mode="dm"
           />
@@ -136,6 +153,7 @@ export function DmView() {
             {tab === 'inspector' && <HexInspector />}
             {tab === 'quests' && <QuestsPanel />}
             {tab === 'rumors' && <RumorsPanel />}
+            {tab === 'encounters' && <EncountersPanel />}
             {tab === 'items' && <ItemsPanel />}
             {tab === 'regions' && <RegionsPanel />}
             {tab === 'journal' && <JournalPanel />}

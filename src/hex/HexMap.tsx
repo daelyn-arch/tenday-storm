@@ -9,10 +9,19 @@ import {
   rectBounds,
   type Axial,
 } from './coords'
-import { BIOME_COLOR } from '../world/biomes'
-import type { HexRow, RegionRow, ItemRow } from '../types/db'
+import { BIOME_COLOR, BIOME_LABEL } from '../world/biomes'
+import type { HexRow, RegionRow } from '../types/db'
+import { LocationIcon } from './LocationIcon'
 
-export interface MapHex extends Pick<HexRow, 'q' | 'r' | 'biome' | 'region_id' | 'revealed' | 'party_visited' | 'generated' | 'dm_notes'> {}
+export interface MapHex extends Pick<HexRow, 'q' | 'r' | 'biome' | 'region_id' | 'revealed' | 'party_visited' | 'generated' | 'dm_notes' | 'location_type'> {}
+
+export type PinKind = 'quest' | 'rumor' | 'encounter' | 'journal'
+
+export interface Pin {
+  q: number
+  r: number
+  kind: PinKind
+}
 
 export interface HexMapProps {
   width: number
@@ -21,11 +30,15 @@ export interface HexMapProps {
   regions: RegionRow[]
   partyHex: Axial
   stormHex: Axial
-  stormPath?: Axial[]
+  stormRadius: number
+  /** Next-day storm location to telegraph as a dashed outline. */
+  nextStormHex?: Axial | null
   finalBoss?: Axial | null
-  items?: Pick<ItemRow, 'name' | 'hex_q' | 'hex_r' | 'is_real' | 'discovered'>[]
+  /** Quest/rumor/encounter pins to render on the map. */
+  pins?: Pin[]
   selected?: Axial | null
-  onSelect?: (q: number, r: number) => void
+  /** Receives the new selection or null to clear. */
+  onSelect?: (next: Axial | null) => void
   mode: 'dm' | 'player'
 }
 
@@ -34,6 +47,13 @@ interface FogState {
   vis: Map<string, 'revealed' | 'scouted' | 'unknown'>
   /** region ids that should show outline+name to players */
   knownRegions: Set<string>
+}
+
+const PIN_COLORS: Record<PinKind, string> = {
+  quest: '#ffd84a',
+  rumor: '#e84a4a',
+  encounter: '#ff9a3a',
+  journal: '#5cc7ff',
 }
 
 function computeFog(props: HexMapProps): FogState {
@@ -60,7 +80,7 @@ function computeFog(props: HexMapProps): FogState {
 }
 
 export function HexMap(props: HexMapProps) {
-  const { hexes, regions, partyHex, stormHex, stormPath, finalBoss, items, selected, onSelect, mode } = props
+  const { hexes, regions, partyHex, stormHex, stormRadius, nextStormHex, finalBoss, pins, selected, onSelect, mode } = props
   const fog = useMemo(() => computeFog(props), [props])
   const regionsById = useMemo(() => {
     const m = new Map<string, RegionRow>()
@@ -78,7 +98,9 @@ export function HexMap(props: HexMapProps) {
   const [tx, setTx] = useState(0)
   const [ty, setTy] = useState(0)
   const [scale, setScale] = useState(1)
-  const dragging = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
+  // Track drag origin AND whether the cursor actually moved enough to count as
+  // a pan. A click-without-drag on the map background counts as a deselect.
+  const dragging = useRef<{ x: number; y: number; tx: number; ty: number; moved: boolean } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -95,9 +117,13 @@ export function HexMap(props: HexMapProps) {
     setTy((ch - bounds.h * s) / 2 - bounds.minY * s)
   }, [bounds.w, bounds.h, bounds.minX, bounds.minY])
 
-  // Region outlines (precomputed segments)
+  // Region outlines: when two regions meet on an edge, both hexes contribute
+  // a segment for that shared edge. We offset each segment a couple pixels
+  // toward its own hex's center so the two colors appear as parallel stripes
+  // instead of one hiding the other.
   const regionEdges = useMemo(() => {
     const segments: { d: string; color: string; regionId: string }[] = []
+    const inset = 2 // pixels each segment is shifted toward its hex's center
     for (const h of hexes) {
       if (!h.region_id) continue
       if (mode === 'player' && !fog.knownRegions.has(h.region_id)) continue
@@ -121,18 +147,32 @@ export function HexMap(props: HexMapProps) {
         const b = corners[(i + 1) % 6]
         const region = regionsById.get(h.region_id)
         const color = region?.color ?? '#fff'
-        segments.push({ d: `M ${a.x} ${a.y} L ${b.x} ${b.y}`, color, regionId: h.region_id })
+        // Inward normal from edge midpoint toward this hex's center.
+        const mx = (a.x + b.x) / 2
+        const my = (a.y + b.y) / 2
+        const dxn = center.x - mx
+        const dyn = center.y - my
+        const len = Math.hypot(dxn, dyn) || 1
+        const ox = (dxn / len) * inset
+        const oy = (dyn / len) * inset
+        const ax = a.x + ox
+        const ay = a.y + oy
+        const bx = b.x + ox
+        const by = b.y + oy
+        segments.push({ d: `M ${ax} ${ay} L ${bx} ${by}`, color, regionId: h.region_id })
       }
     }
     return segments
   }, [hexes, hexesByKey, regionsById, fog.knownRegions, mode])
 
-  // Region label positions: average of revealed hexes in each region (player) or all hexes (DM).
+  // Region label positions: always average over ALL hexes in the region so the
+  // label sits at the true centroid. Players see every region's name (the
+  // realms are common knowledge), even though the hex-by-hex outlines remain
+  // fog-of-war'd until they explore.
   const regionLabels = useMemo(() => {
     const acc = new Map<string, { x: number; y: number; n: number; name: string; color: string }>()
     for (const h of hexes) {
       if (!h.region_id) continue
-      if (mode === 'player' && !fog.knownRegions.has(h.region_id)) continue
       const region = regionsById.get(h.region_id)
       if (!region) continue
       const p = hexToPixel({ q: h.q, r: h.r })
@@ -148,23 +188,33 @@ export function HexMap(props: HexMapProps) {
       name: v.name,
       color: v.color,
     }))
-  }, [hexes, regionsById, fog.knownRegions, mode])
+  }, [hexes, regionsById])
 
-  // Visible items
-  const visibleItems = useMemo(() => {
-    if (!items) return []
-    return items.filter((it) => {
-      if (it.hex_q == null || it.hex_r == null) return false
-      if (mode === 'dm') return true
-      // Player: only if discovered
-      return it.discovered && it.is_real
-    })
-  }, [items, mode])
+  // Group pins by hex so we can fan them out instead of stacking on top of each other.
+  const pinsByHex = useMemo(() => {
+    const m = new Map<string, PinKind[]>()
+    for (const p of pins ?? []) {
+      const k = `${p.q},${p.r}`
+      const arr = m.get(k) ?? []
+      arr.push(p.kind)
+      m.set(k, arr)
+    }
+    return m
+  }, [pins])
 
-  // Storm circle pixel center
+  // Storm circle pixel center. Visual radius scales with hex-radius so a
+  // radius-3 storm visibly covers ~3 rings of hexes.
   const stormCenter = hexToPixel(stormHex)
+  const stormPixelRadius = HEX_SIZE * (Math.sqrt(3) * stormRadius + 0.6)
+  const nextStormCenter = nextStormHex ? hexToPixel(nextStormHex) : null
   const partyCenter = hexToPixel(partyHex)
   const finalBossCenter = finalBoss ? hexToPixel(finalBoss) : null
+
+  // Selected-hex coord HUD content
+  const selectedHex = selected ? hexesByKey.get(`${selected.q},${selected.r}`) : null
+  const hudLabel = selectedHex
+    ? `${BIOME_LABEL[selectedHex.biome]} (${selected!.q}, ${selected!.r})`
+    : null
 
   return (
     <div
@@ -175,14 +225,26 @@ export function HexMap(props: HexMapProps) {
         // Only start drag if not on a hex (i.e., target is the svg background).
         const isBg = (e.target as Element).tagName === 'svg'
         if (!isBg) return
-        dragging.current = { x: e.clientX, y: e.clientY, tx, ty }
+        dragging.current = { x: e.clientX, y: e.clientY, tx, ty, moved: false }
       }}
       onMouseMove={(e) => {
         if (!dragging.current) return
-        setTx(dragging.current.tx + (e.clientX - dragging.current.x))
-        setTy(dragging.current.ty + (e.clientY - dragging.current.y))
+        const dx = e.clientX - dragging.current.x
+        const dy = e.clientY - dragging.current.y
+        if (!dragging.current.moved && Math.hypot(dx, dy) > 3) {
+          dragging.current.moved = true
+        }
+        if (dragging.current.moved) {
+          setTx(dragging.current.tx + dx)
+          setTy(dragging.current.ty + dy)
+        }
       }}
       onMouseUp={() => {
+        // A mousedown on the SVG bg without movement counts as "click empty
+        // space" — clear the current selection.
+        if (dragging.current && !dragging.current.moved && selected) {
+          onSelect?.(null)
+        }
         dragging.current = null
       }}
       onMouseLeave={() => {
@@ -195,7 +257,10 @@ export function HexMap(props: HexMapProps) {
         const mx = e.clientX - rect.left
         const my = e.clientY - rect.top
         const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-        const newScale = Math.max(0.2, Math.min(4, scale * factor))
+        // Don't let the user zoom out further than "whole map fits". Recompute
+        // the fit scale on every wheel so window resizes are respected.
+        const fitScale = Math.min(c.clientWidth / bounds.w, c.clientHeight / bounds.h) * 0.95
+        const newScale = Math.max(fitScale, Math.min(4, scale * factor))
         // Keep mouse-locked zoom.
         setTx(mx - (mx - tx) * (newScale / scale))
         setTy(my - (my - ty) * (newScale / scale))
@@ -208,7 +273,6 @@ export function HexMap(props: HexMapProps) {
           {hexes.map((h) => {
             const p = hexToPixel({ q: h.q, r: h.r })
             const v = fog.vis.get(axialKey(h)) ?? 'unknown'
-            const isSelected = selected && selected.q === h.q && selected.r === h.r
             let fill = BIOME_COLOR[h.biome]
             let opacity = 1
             if (v === 'scouted') {
@@ -217,18 +281,21 @@ export function HexMap(props: HexMapProps) {
               fill = '#0c0a07'
               opacity = 1
             }
+            const isSelected = selected && selected.q === h.q && selected.r === h.r
             return (
               <polygon
                 key={axialKey(h)}
                 points={hexPolygonPoints(p.x, p.y)}
                 fill={fill}
                 fillOpacity={opacity}
-                stroke={isSelected ? '#fff' : '#0008'}
-                strokeWidth={isSelected ? 2.5 : 0.5}
+                stroke="#0008"
+                strokeWidth={0.5}
                 style={{ cursor: 'pointer' }}
                 onClick={(e) => {
                   e.stopPropagation()
-                  onSelect?.(h.q, h.r)
+                  // Toggle: clicking the currently-selected hex deselects it.
+                  if (isSelected) onSelect?.(null)
+                  else onSelect?.({ q: h.q, r: h.r })
                 }}
               />
             )
@@ -239,26 +306,77 @@ export function HexMap(props: HexMapProps) {
             <path key={i} d={s.d} stroke={s.color} strokeWidth={2.5} strokeLinecap="round" fill="none" opacity={0.85} />
           ))}
 
-          {/* Storm path preview (DM only) */}
-          {mode === 'dm' && stormPath && stormPath.length > 1 && (
-            <polyline
-              points={stormPath.map((p) => {
-                const pp = hexToPixel(p)
-                return `${pp.x},${pp.y}`
-              }).join(' ')}
-              fill="none"
-              stroke="#9a7fbf"
-              strokeWidth={2}
-              strokeDasharray="6 6"
-              opacity={0.5}
-            />
+          {/* Location icons (village / city / temple / etc.). Players only see
+              icons on revealed hexes — unrevealed landmarks stay secret. */}
+          {hexes.map((h) => {
+            if (!h.location_type) return null
+            if (mode === 'player' && !h.revealed) return null
+            const p = hexToPixel({ q: h.q, r: h.r })
+            return (
+              <LocationIcon
+                key={`loc-${axialKey(h)}`}
+                type={h.location_type}
+                cx={p.x}
+                cy={p.y}
+              />
+            )
+          })}
+
+          {/* Selection indicator: a smaller hex inside the selected tile so the
+              region borders remain visible alongside it. */}
+          {selected && (() => {
+            const sp = hexToPixel(selected)
+            return (
+              <polygon
+                points={hexPolygonPoints(sp.x, sp.y, HEX_SIZE * 0.82)}
+                fill="none"
+                stroke="#fff"
+                strokeWidth={2}
+                pointerEvents="none"
+              />
+            )
+          })()}
+
+          {/* Next-day storm telegraph (DM always; players only when DM has
+              flipped the tracker on, which represents a spell or item). */}
+          {nextStormCenter && (
+            <g pointerEvents="none">
+              <circle
+                cx={nextStormCenter.x}
+                cy={nextStormCenter.y}
+                r={stormPixelRadius}
+                fill="url(#stormGrad)"
+                opacity={0.18}
+              />
+              <circle
+                cx={nextStormCenter.x}
+                cy={nextStormCenter.y}
+                r={stormPixelRadius}
+                fill="none"
+                stroke="#9a7fbf"
+                strokeWidth={1.5}
+                strokeDasharray="3 6"
+                opacity={0.7}
+              />
+              <text
+                x={nextStormCenter.x}
+                y={nextStormCenter.y - stormPixelRadius - 6}
+                textAnchor="middle"
+                fontSize={11}
+                fill="#c9b3e6"
+                fontFamily="Cinzel, serif"
+                style={{ paintOrder: 'stroke', stroke: '#000a', strokeWidth: 3, strokeLinejoin: 'round' }}
+              >
+                next
+              </text>
+            </g>
           )}
 
           {/* Storm overlay */}
           <circle
             cx={stormCenter.x}
             cy={stormCenter.y}
-            r={HEX_SIZE * 1.6}
+            r={stormPixelRadius}
             fill="url(#stormGrad)"
             opacity={0.55}
             pointerEvents="none"
@@ -266,7 +384,7 @@ export function HexMap(props: HexMapProps) {
           <circle
             cx={stormCenter.x}
             cy={stormCenter.y}
-            r={HEX_SIZE * 1.6}
+            r={stormPixelRadius}
             fill="none"
             stroke="#9a7fbf"
             strokeWidth={2}
@@ -274,17 +392,32 @@ export function HexMap(props: HexMapProps) {
             pointerEvents="none"
           />
 
-          {/* Item markers */}
-          {visibleItems.map((it, i) => {
-            const p = hexToPixel({ q: it.hex_q!, r: it.hex_r! })
-            const color = mode === 'dm' ? (it.is_real ? '#ffd84a' : '#7a6a4a') : '#ffd84a'
+          {/* Quest/rumor/encounter pins. Cluster siblings on the same hex by
+              fanning them horizontally so each is visible. */}
+          {Array.from(pinsByHex.entries()).map(([key, kinds]) => {
+            const [qStr, rStr] = key.split(',')
+            const p = hexToPixel({ q: parseInt(qStr, 10), r: parseInt(rStr, 10) })
+            const total = kinds.length
+            const spacing = 10
+            const startX = p.x - ((total - 1) * spacing) / 2
+            const baseY = p.y - HEX_SIZE * 0.35
             return (
-              <g key={`item-${i}`} pointerEvents="none">
-                <circle cx={p.x} cy={p.y - HEX_SIZE * 0.25} r={6} fill={color} stroke="#000" strokeWidth={1} />
-                <polygon
-                  points={`${p.x - 4},${p.y - HEX_SIZE * 0.25 + 5} ${p.x + 4},${p.y - HEX_SIZE * 0.25 + 5} ${p.x},${p.y - HEX_SIZE * 0.25 + 12}`}
-                  fill={color}
-                />
+              <g key={`pin-${key}`} pointerEvents="none">
+                {kinds.map((k, i) => {
+                  const cx = startX + i * spacing
+                  const color = PIN_COLORS[k]
+                  return (
+                    <g key={`${key}-${i}`}>
+                      <circle cx={cx} cy={baseY} r={5} fill={color} stroke="#000" strokeWidth={1} />
+                      <polygon
+                        points={`${cx - 3.5},${baseY + 4} ${cx + 3.5},${baseY + 4} ${cx},${baseY + 11}`}
+                        fill={color}
+                        stroke="#000"
+                        strokeWidth={0.5}
+                      />
+                    </g>
+                  )
+                })}
               </g>
             )
           })}
@@ -339,6 +472,12 @@ export function HexMap(props: HexMapProps) {
           </radialGradient>
         </defs>
       </svg>
+      {/* Selected-tile coord HUD, anchored bottom-right of the map area. */}
+      {hudLabel && (
+        <div className="absolute bottom-3 right-3 px-2.5 py-1 rounded bg-ink-900/85 border border-ink-400/30 text-ink-100 text-xs font-display tracking-wide pointer-events-none">
+          {hudLabel}
+        </div>
+      )}
     </div>
   )
 }

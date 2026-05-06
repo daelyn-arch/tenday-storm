@@ -13,8 +13,8 @@ export function SetupWizard() {
   const navigate = useNavigate()
   const [name, setName] = useState('The Tenday Storm')
   const [seed, setSeed] = useState(() => randomSeed())
-  const [width, setWidth] = useState(30)
-  const [height, setHeight] = useState(40)
+  const [width, setWidth] = useState(20)
+  const [height, setHeight] = useState(20)
   const [maxDays, setMaxDays] = useState(10)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -86,30 +86,8 @@ export function SetupWizard() {
         if (hErr) throw hErr
       }
 
-      // 4. Insert items
-      const itemInserts = world.items.map((it) => ({
-        ...it,
-        campaign_id: campaignId,
-      }))
-      if (itemInserts.length) {
-        const { error: iErr } = await supabase.from('items').insert(itemInserts)
-        if (iErr) throw iErr
-      }
-
-      // 5. Insert rumors
-      const rumorInserts = world.rumors.map((rm) => ({
-        text: rm.text,
-        is_true: rm.is_true,
-        target_q: rm.target_q,
-        target_r: rm.target_r,
-        collected: rm.collected,
-        source_region_id: rm.source_region_index != null ? regionIdByIndex[rm.source_region_index] : null,
-        campaign_id: campaignId,
-      }))
-      if (rumorInserts.length) {
-        const { error: rmErr } = await supabase.from('rumors').insert(rumorInserts)
-        if (rmErr) throw rmErr
-      }
+      // Items + rumors are intentionally not generated — the DM creates them
+      // by hand from the Items and Rumors panels once play begins.
 
       navigate(`/c/${campaignId}/dm`)
     } catch (e) {
@@ -161,7 +139,7 @@ export function SetupWizard() {
                 className="input"
                 type="number"
                 min={10}
-                max={60}
+                max={30}
                 value={width}
                 onChange={(e) => setWidth(parseInt(e.target.value || '0', 10) || 0)}
               />
@@ -172,7 +150,7 @@ export function SetupWizard() {
                 className="input"
                 type="number"
                 min={10}
-                max={60}
+                max={30}
                 value={height}
                 onChange={(e) => setHeight(parseInt(e.target.value || '0', 10) || 0)}
               />
@@ -193,12 +171,7 @@ export function SetupWizard() {
             <div className="text-xs text-ink-300 space-y-1 pt-2 border-t border-ink-700">
               <div>Regions: {world.regions.length}</div>
               <div>
-                Real items: {world.items.filter((i) => i.is_real).length} · Fake:{' '}
-                {world.items.filter((i) => !i.is_real).length}
-              </div>
-              <div>Rumors: {world.rumors.length}</div>
-              <div>
-                Storm starts at ({world.campaign.storm_q}, {world.campaign.storm_r}), {world.campaign.storm_path.length}-step path
+                Storm starts at ({world.campaign.storm_q}, {world.campaign.storm_r}), radius {world.campaign.storm_radius}, jumps to {world.campaign.storm_path.length} random hexes over the campaign
               </div>
               <div>
                 Party at ({world.campaign.party_q}, {world.campaign.party_r})
@@ -216,19 +189,13 @@ export function SetupWizard() {
               regions={previewRegions}
               partyHex={{ q: world.campaign.party_q, r: world.campaign.party_r }}
               stormHex={{ q: world.campaign.storm_q, r: world.campaign.storm_r }}
-              stormPath={world.campaign.storm_path}
+              stormRadius={world.campaign.storm_radius}
+              nextStormHex={world.campaign.storm_path[1] ?? null}
               finalBoss={
                 world.campaign.final_boss_q != null && world.campaign.final_boss_r != null
                   ? { q: world.campaign.final_boss_q, r: world.campaign.final_boss_r }
                   : null
               }
-              items={world.items.map((it) => ({
-                name: it.name,
-                hex_q: it.hex_q,
-                hex_r: it.hex_r,
-                is_real: it.is_real,
-                discovered: it.discovered,
-              }))}
               mode="dm"
             />
           ) : (

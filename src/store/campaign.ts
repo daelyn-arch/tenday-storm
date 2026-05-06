@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { axialKey, neighbors, type Axial } from '../hex/coords'
 import type {
   CampaignRow,
+  EncounterRow,
   HexRow,
   ItemRow,
   JournalRow,
@@ -20,6 +21,7 @@ export interface CampaignState {
   items: ItemRow[]
   rumors: RumorRow[]
   quests: QuestRow[]
+  encounters: EncounterRow[]
   journal: JournalRow[]
   members: MemberRow[]
   selected: Axial | null
@@ -38,35 +40,45 @@ export interface CampaignState {
   moveParty: (to: Axial) => Promise<void>
 
   // Quest CRUD
-  addQuest: (title: string) => Promise<void>
+  addQuest: (title: string, target?: Axial | null) => Promise<void>
   updateQuest: (id: string, patch: Partial<QuestRow>) => Promise<void>
   deleteQuest: (id: string) => Promise<void>
 
   // Rumor CRUD
-  addRumor: (text: string, isTrue: boolean) => Promise<void>
+  addRumor: (text: string, isTrue: boolean, target?: Axial | null) => Promise<void>
   updateRumor: (id: string, patch: Partial<RumorRow>) => Promise<void>
   deleteRumor: (id: string) => Promise<void>
 
   // Item CRUD
-  addItem: (name: string, isReal: boolean) => Promise<void>
+  addItem: (
+    name: string,
+    isReal: boolean,
+    assignment?: { questId?: string | null; rumorId?: string | null } | null,
+    tile?: Axial | null,
+  ) => Promise<void>
   updateItem: (id: string, patch: Partial<ItemRow>) => Promise<void>
   deleteItem: (id: string) => Promise<void>
+
+  // Encounter CRUD
+  addEncounter: (text: string, target?: Axial | null) => Promise<void>
+  updateEncounter: (id: string, patch: Partial<EncounterRow>) => Promise<void>
+  deleteEncounter: (id: string) => Promise<void>
 
   // Region updates
   updateRegion: (id: string, patch: Partial<RegionRow>) => Promise<void>
 
   // Journal
-  addJournal: (body: string, author: string) => Promise<void>
+  addJournal: (body: string, author: string, target?: Axial | null) => Promise<void>
   updateJournal: (id: string, patch: Partial<JournalRow>) => Promise<void>
   deleteJournal: (id: string) => Promise<void>
 
   // Internal: realtime upserts
-  upsertRow: <K extends 'hexes' | 'regions' | 'items' | 'rumors' | 'quests' | 'journal' | 'members'>(
+  upsertRow: <K extends 'hexes' | 'regions' | 'items' | 'rumors' | 'quests' | 'encounters' | 'journal' | 'members'>(
     table: K,
     row: any,
   ) => void
   removeRow: (
-    table: 'hexes' | 'regions' | 'items' | 'rumors' | 'quests' | 'journal' | 'members',
+    table: 'hexes' | 'regions' | 'items' | 'rumors' | 'quests' | 'encounters' | 'journal' | 'members',
     key: any,
   ) => void
   setCampaignRow: (c: CampaignRow) => void
@@ -80,6 +92,7 @@ export const useCampaign = create<CampaignState>((set, get) => ({
   items: [],
   rumors: [],
   quests: [],
+  encounters: [],
   journal: [],
   members: [],
   selected: null,
@@ -96,6 +109,7 @@ export const useCampaign = create<CampaignState>((set, get) => ({
       items: [],
       rumors: [],
       quests: [],
+      encounters: [],
       journal: [],
       members: [],
       selected: null,
@@ -111,13 +125,14 @@ export const useCampaign = create<CampaignState>((set, get) => ({
     try {
       const { data: user } = await supabase.auth.getUser()
       const userId = user.user?.id
-      const [c, hexes, regions, items, rumors, quests, journal, members] = await Promise.all([
+      const [c, hexes, regions, items, rumors, quests, encounters, journal, members] = await Promise.all([
         supabase.from('campaigns').select('*').eq('id', id).single(),
         supabase.from('hexes').select('*').eq('campaign_id', id),
         supabase.from('regions').select('*').eq('campaign_id', id),
         supabase.from('items').select('*').eq('campaign_id', id),
         supabase.from('rumors').select('*').eq('campaign_id', id),
         supabase.from('quests').select('*').eq('campaign_id', id),
+        supabase.from('encounters').select('*').eq('campaign_id', id),
         supabase.from('journal_entries').select('*').eq('campaign_id', id).order('created_at', { ascending: false }),
         supabase.from('campaign_members').select('*').eq('campaign_id', id),
       ])
@@ -132,6 +147,8 @@ export const useCampaign = create<CampaignState>((set, get) => ({
         items: items.data ?? [],
         rumors: rumors.data ?? [],
         quests: quests.data ?? [],
+        // Encounters are DM-only; an empty fetch (RLS denies players) is fine.
+        encounters: encounters.data ?? [],
         journal: journal.data ?? [],
         members: members.data ?? [],
         myRole,
@@ -198,11 +215,29 @@ export const useCampaign = create<CampaignState>((set, get) => ({
     await get().updateCampaign({ party_q: to.q, party_r: to.r })
   },
 
-  addQuest: async (title) => {
+  addQuest: async (title, target) => {
     const id = get().campaignId
     if (!id) return
-    const { error } = await supabase.from('quests').insert({ campaign_id: id, title, body: '', status: 'open', player_visible: true })
-    if (error) console.error('addQuest failed', error)
+    // Client-generated id + optimistic insert so the user sees the new row
+    // immediately even if the realtime echo is slow or the channel dropped.
+    const newId = crypto.randomUUID()
+    const optimistic: QuestRow = {
+      id: newId,
+      campaign_id: id,
+      title,
+      body: '',
+      status: 'open',
+      player_visible: true,
+      target_q: target?.q ?? null,
+      target_r: target?.r ?? null,
+      created_at: new Date().toISOString(),
+    }
+    set((s) => ({ quests: [...s.quests, optimistic] }))
+    const { error } = await supabase.from('quests').insert(optimistic)
+    if (error) {
+      console.error('addQuest failed', error)
+      set((s) => ({ quests: s.quests.filter((q) => q.id !== newId) }))
+    }
   },
   updateQuest: async (qid, patch) => {
     set((s) => ({ quests: s.quests.map((q) => (q.id === qid ? { ...q, ...patch } : q)) }))
@@ -215,19 +250,26 @@ export const useCampaign = create<CampaignState>((set, get) => ({
     if (error) console.error('deleteQuest failed', error)
   },
 
-  addRumor: async (text, isTrue) => {
+  addRumor: async (text, isTrue, target) => {
     const id = get().campaignId
     if (!id) return
-    const { error } = await supabase.from('rumors').insert({
+    const newId = crypto.randomUUID()
+    const optimistic: RumorRow = {
+      id: newId,
       campaign_id: id,
       text,
       is_true: isTrue,
-      target_q: null,
-      target_r: null,
+      target_q: target?.q ?? null,
+      target_r: target?.r ?? null,
       source_region_id: null,
       collected: false,
-    })
-    if (error) console.error('addRumor failed', error)
+    }
+    set((s) => ({ rumors: [...s.rumors, optimistic] }))
+    const { error } = await supabase.from('rumors').insert(optimistic)
+    if (error) {
+      console.error('addRumor failed', error)
+      set((s) => ({ rumors: s.rumors.filter((r) => r.id !== newId) }))
+    }
   },
   updateRumor: async (rid, patch) => {
     set((s) => ({ rumors: s.rumors.map((r) => (r.id === rid ? { ...r, ...patch } : r)) }))
@@ -240,20 +282,29 @@ export const useCampaign = create<CampaignState>((set, get) => ({
     if (error) console.error('deleteRumor failed', error)
   },
 
-  addItem: async (name, isReal) => {
+  addItem: async (name, isReal, assignment, tile) => {
     const id = get().campaignId
     if (!id) return
-    const { error } = await supabase.from('items').insert({
+    const newId = crypto.randomUUID()
+    const optimistic: ItemRow = {
+      id: newId,
       campaign_id: id,
       name,
       description: '',
-      hex_q: null,
-      hex_r: null,
+      hex_q: tile?.q ?? null,
+      hex_r: tile?.r ?? null,
       is_real: isReal,
       discovered: false,
       in_party_inventory: false,
-    })
-    if (error) console.error('addItem failed', error)
+      quest_id: assignment?.questId ?? null,
+      rumor_id: assignment?.rumorId ?? null,
+    }
+    set((s) => ({ items: [...s.items, optimistic] }))
+    const { error } = await supabase.from('items').insert(optimistic)
+    if (error) {
+      console.error('addItem failed', error)
+      set((s) => ({ items: s.items.filter((it) => it.id !== newId) }))
+    }
   },
   updateItem: async (iid, patch) => {
     set((s) => ({ items: s.items.map((it) => (it.id === iid ? { ...it, ...patch } : it)) }))
@@ -266,17 +317,64 @@ export const useCampaign = create<CampaignState>((set, get) => ({
     if (error) console.error('deleteItem failed', error)
   },
 
+  addEncounter: async (text, target) => {
+    const id = get().campaignId
+    if (!id) return
+    const newId = crypto.randomUUID()
+    const optimistic: EncounterRow = {
+      id: newId,
+      campaign_id: id,
+      text,
+      target_q: target?.q ?? null,
+      target_r: target?.r ?? null,
+      used: false,
+      created_at: new Date().toISOString(),
+    }
+    set((s) => ({ encounters: [...s.encounters, optimistic] }))
+    const { error } = await supabase.from('encounters').insert(optimistic)
+    if (error) {
+      console.error('addEncounter failed', error)
+      set((s) => ({ encounters: s.encounters.filter((e) => e.id !== newId) }))
+    }
+  },
+  updateEncounter: async (eid, patch) => {
+    set((s) => ({ encounters: s.encounters.map((e) => (e.id === eid ? { ...e, ...patch } : e)) }))
+    const { error } = await supabase.from('encounters').update(patch).eq('id', eid)
+    if (error) console.error('updateEncounter failed', error)
+  },
+  deleteEncounter: async (eid) => {
+    set((s) => ({ encounters: s.encounters.filter((e) => e.id !== eid) }))
+    const { error } = await supabase.from('encounters').delete().eq('id', eid)
+    if (error) console.error('deleteEncounter failed', error)
+  },
+
   updateRegion: async (rid, patch) => {
     set((s) => ({ regions: s.regions.map((r) => (r.id === rid ? { ...r, ...patch } : r)) }))
     const { error } = await supabase.from('regions').update(patch).eq('id', rid)
     if (error) console.error('updateRegion failed', error)
   },
 
-  addJournal: async (body, author) => {
+  addJournal: async (body, author, target) => {
     const id = get().campaignId
     if (!id) return
-    const { error } = await supabase.from('journal_entries').insert({ campaign_id: id, body, author })
-    if (error) console.error('addJournal failed', error)
+    const newId = crypto.randomUUID()
+    const now = new Date().toISOString()
+    const optimistic: JournalRow = {
+      id: newId,
+      campaign_id: id,
+      body,
+      author,
+      target_q: target?.q ?? null,
+      target_r: target?.r ?? null,
+      created_at: now,
+      updated_at: now,
+    }
+    set((s) => ({ journal: [optimistic, ...s.journal] }))
+    const { error } = await supabase.from('journal_entries').insert(optimistic)
+    if (error) {
+      console.error('addJournal failed', error)
+      set((s) => ({ journal: s.journal.filter((j) => j.id !== newId) }))
+    }
   },
   updateJournal: async (jid, patch) => {
     set((s) => ({ journal: s.journal.map((j) => (j.id === jid ? { ...j, ...patch } : j)) }))
@@ -327,6 +425,12 @@ export const useCampaign = create<CampaignState>((set, get) => ({
             ? { quests: s.quests.map((x) => (x.id === row.id ? row : x)) }
             : { quests: [...s.quests, row] }
         }
+        case 'encounters': {
+          const exists = s.encounters.find((x) => x.id === row.id)
+          return exists
+            ? { encounters: s.encounters.map((x) => (x.id === row.id ? row : x)) }
+            : { encounters: [...s.encounters, row] }
+        }
         case 'journal': {
           const exists = s.journal.find((x) => x.id === row.id)
           return exists
@@ -362,6 +466,8 @@ export const useCampaign = create<CampaignState>((set, get) => ({
           return { rumors: s.rumors.filter((x) => x.id !== key.id) }
         case 'quests':
           return { quests: s.quests.filter((x) => x.id !== key.id) }
+        case 'encounters':
+          return { encounters: s.encounters.filter((x) => x.id !== key.id) }
         case 'journal':
           return { journal: s.journal.filter((x) => x.id !== key.id) }
         case 'members':

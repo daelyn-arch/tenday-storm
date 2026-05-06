@@ -44,6 +44,10 @@ export function useCampaignChannel(campaignId: string | null) {
         if (payload.eventType === 'DELETE') removeRow('quests', payload.old)
         else if (payload.new) upsertRow('quests', payload.new)
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'encounters', filter }, (payload) => {
+        if (payload.eventType === 'DELETE') removeRow('encounters', payload.old)
+        else if (payload.new) upsertRow('encounters', payload.new)
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'journal_entries', filter }, (payload) => {
         if (payload.eventType === 'DELETE') removeRow('journal', payload.old)
         else if (payload.new) upsertRow('journal', payload.new)

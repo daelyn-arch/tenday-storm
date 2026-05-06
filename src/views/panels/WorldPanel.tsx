@@ -10,6 +10,8 @@ export function WorldPanel() {
     { q: campaign.party_q, r: campaign.party_r },
     { q: campaign.storm_q, r: campaign.storm_r },
   )
+  const stormEdgeDist = Math.max(0, stormDist - campaign.storm_radius)
+  const next = campaign.storm_path[campaign.day] ?? null
   const inviteUrl = `${window.location.origin}/c/${campaign.id}/join?code=${campaign.invite_code}`
   const revealed = hexes.filter((h) => h.revealed).length
   return (
@@ -19,8 +21,10 @@ export function WorldPanel() {
           Day {campaign.day} <span className="text-ink-300 text-base">/ {campaign.max_days}</span>
         </div>
         <div className="text-ink-300 text-xs">
-          Storm {stormDist} hexes from party · Path step {Math.min(campaign.day, campaign.storm_path.length)} /{' '}
-          {campaign.storm_path.length}
+          {stormEdgeDist === 0
+            ? 'Party is inside the storm'
+            : `Storm edge ${stormEdgeDist} hex${stormEdgeDist === 1 ? '' : 'es'} from party`}
+          {next ? ` · jumps next to (${next.q}, ${next.r})` : ' · final day'}
         </div>
         {confirming ? (
           <div className="flex gap-2">
@@ -63,31 +67,46 @@ export function WorldPanel() {
         <div>Final boss: ({campaign.final_boss_q}, {campaign.final_boss_r})</div>
       </div>
 
-      <div className="panel p-3 space-y-2">
-        <div className="font-display text-base">Storm</div>
+      <div className="panel p-3 space-y-3">
+        <div className="font-display text-base">Storm tracker</div>
         <div className="text-xs text-ink-300">
-          Step the storm to a custom hex (overrides the default path step on the next end-day).
+          The storm jumps to a random hex each day. Flip this on once the party
+          obtains a spell or item that lets them divine where it strikes next —
+          they'll see the same dashed outline you do.
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block">
-            <span className="label-tiny">Storm Q</span>
-            <input
-              className="input"
-              type="number"
-              value={campaign.storm_q}
-              onChange={(e) => updateCampaign({ storm_q: parseInt(e.target.value || '0', 10) })}
-            />
-          </label>
-          <label className="block">
-            <span className="label-tiny">Storm R</span>
-            <input
-              className="input"
-              type="number"
-              value={campaign.storm_r}
-              onChange={(e) => updateCampaign({ storm_r: parseInt(e.target.value || '0', 10) })}
-            />
-          </label>
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={campaign.players_see_storm_next}
+            onChange={(e) => updateCampaign({ players_see_storm_next: e.target.checked })}
+          />
+          <span>Reveal next storm location to players</span>
+        </label>
+        <div className="text-xs text-ink-300 border-t border-ink-700 pt-2">
+          {next
+            ? `Next jump: (${next.q}, ${next.r})`
+            : 'No further jumps — this is the final day.'}
         </div>
+        {next && (
+          <button
+            className="btn"
+            onClick={() => {
+              const land = hexes.filter(
+                (h) =>
+                  h.biome !== 'ocean' &&
+                  !(h.q === campaign.party_q && h.r === campaign.party_r) &&
+                  !(h.q === campaign.storm_q && h.r === campaign.storm_r),
+              )
+              if (!land.length) return
+              const pick = land[Math.floor(Math.random() * land.length)]
+              const path = campaign.storm_path.slice()
+              path[campaign.day] = { q: pick.q, r: pick.r }
+              updateCampaign({ storm_path: path })
+            }}
+          >
+            Reroll next jump
+          </button>
+        )}
       </div>
     </div>
   )

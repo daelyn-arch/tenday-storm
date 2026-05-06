@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useCampaign } from '../store/campaign'
-import { HexMap } from '../hex/HexMap'
+import { HexMap, type Pin } from '../hex/HexMap'
 import { QuestsPanel } from './panels/QuestsPanel'
 import { RumorsPanel } from './panels/RumorsPanel'
 import { ItemsPanel } from './panels/ItemsPanel'
@@ -29,12 +29,32 @@ export function PlayerView() {
     campaign,
     hexes,
     regions,
-    items,
+    quests,
+    rumors,
+    journal,
     selected,
     setSelected,
     loading,
     error,
   } = useCampaign()
+
+  // Players see pins only for the quests/rumors they're allowed to know about,
+  // plus journal entries (visible to all members).
+  const pins: Pin[] = useMemo(() => {
+    const out: Pin[] = []
+    for (const q of quests) {
+      if (!q.player_visible) continue
+      if (q.target_q != null && q.target_r != null) out.push({ q: q.target_q, r: q.target_r, kind: 'quest' })
+    }
+    for (const r of rumors) {
+      if (!r.collected) continue
+      if (r.target_q != null && r.target_r != null) out.push({ q: r.target_q, r: r.target_r, kind: 'rumor' })
+    }
+    for (const j of journal) {
+      if (j.target_q != null && j.target_r != null) out.push({ q: j.target_q, r: j.target_r, kind: 'journal' })
+    }
+    return out
+  }, [quests, rumors, journal])
 
   useEffect(() => {
     if (id) load(id)
@@ -56,6 +76,8 @@ export function PlayerView() {
     { q: campaign.party_q, r: campaign.party_r },
     { q: campaign.storm_q, r: campaign.storm_r },
   )
+  const stormEdgeDist = Math.max(0, stormDist - campaign.storm_radius)
+  const inStorm = stormEdgeDist === 0
   const daysLeft = campaign.max_days - campaign.day + 1
 
   return (
@@ -69,10 +91,18 @@ export function PlayerView() {
         </div>
         <div className="flex items-center gap-3 text-sm">
           <span
-            className={`px-2 py-0.5 rounded ${stormDist <= 2 ? 'bg-red-900 text-red-100' : 'bg-storm-700/60 text-storm-200'}`}
-            title="Storm distance from party"
+            className={`px-2 py-0.5 rounded ${
+              inStorm
+                ? 'bg-red-900 text-red-100'
+                : stormEdgeDist <= 1
+                ? 'bg-red-900/70 text-red-100'
+                : 'bg-storm-700/60 text-storm-200'
+            }`}
+            title="Distance to the storm's edge"
           >
-            Storm: {stormDist} hex{stormDist === 1 ? '' : 'es'} away
+            {inStorm
+              ? 'In the storm!'
+              : `Storm: ${stormEdgeDist} hex${stormEdgeDist === 1 ? '' : 'es'} from edge`}
           </span>
           <span className="text-ink-300">{daysLeft} day{daysLeft === 1 ? '' : 's'} left</span>
           <Link to="/" className="btn">
@@ -90,16 +120,14 @@ export function PlayerView() {
             regions={regions}
             partyHex={{ q: campaign.party_q, r: campaign.party_r }}
             stormHex={{ q: campaign.storm_q, r: campaign.storm_r }}
+            stormRadius={campaign.storm_radius}
+            nextStormHex={
+              campaign.players_see_storm_next ? (campaign.storm_path[campaign.day] ?? null) : null
+            }
             finalBoss={null}
-            items={items.map((it) => ({
-              name: it.name,
-              hex_q: it.hex_q,
-              hex_r: it.hex_r,
-              is_real: it.is_real,
-              discovered: it.discovered,
-            }))}
+            pins={pins}
             selected={selected}
-            onSelect={(q, r) => setSelected({ q, r })}
+            onSelect={(next) => setSelected(next)}
             mode="player"
           />
           {selected && (() => {

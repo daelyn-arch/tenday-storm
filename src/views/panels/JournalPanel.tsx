@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useCampaign } from '../../store/campaign'
 import { supabase } from '../../lib/supabase'
+import { BIOME_LABEL } from '../../world/biomes'
 
 export function JournalPanel() {
-  const { journal, addJournal, updateJournal, deleteJournal } = useCampaign()
+  const { journal, hexes, selected, setSelected, addJournal, updateJournal, deleteJournal } = useCampaign()
   const [author, setAuthor] = useState('')
   const [draft, setDraft] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -19,14 +20,31 @@ export function JournalPanel() {
     }
   }, [])
 
+  const selectedHex = selected ? hexes.find((h) => h.q === selected.q && h.r === selected.r) : null
+  const selectionLabel = selectedHex
+    ? `${BIOME_LABEL[selectedHex.biome]} (${selectedHex.q}, ${selectedHex.r})`
+    : null
+
   return (
     <div className="p-4 space-y-3 text-sm overflow-y-auto h-full flex flex-col">
+      <div className="text-xs text-ink-300">
+        {selectionLabel ? (
+          <>
+            Tile selected: <span className="text-ink-100">{selectionLabel}</span>
+            <button className="ml-2 underline text-ink-300" onClick={() => setSelected(null)}>
+              clear
+            </button>
+          </>
+        ) : (
+          <span className="italic">No tile selected — entries posted now will be unpinned.</span>
+        )}
+      </div>
       <form
         className="space-y-2"
         onSubmit={(e) => {
           e.preventDefault()
           if (!draft.trim()) return
-          addJournal(draft.trim(), author)
+          addJournal(draft.trim(), author, selected ?? null)
           setDraft('')
         }}
       >
@@ -84,25 +102,53 @@ export function JournalPanel() {
               ) : (
                 <>
                   <div className="whitespace-pre-wrap">{j.body}</div>
-                  {isMine && (
-                    <div className="flex gap-2 justify-end text-xs">
-                      <button
-                        className="btn text-xs py-1 px-2"
-                        onClick={() => {
-                          setEditingId(j.id)
-                          setEditingBody(j.body)
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button
-                        className="btn btn-danger text-xs py-1 px-2"
-                        onClick={() => deleteJournal(j.id)}
-                      >
-                        Delete
-                      </button>
+                  <div className="flex items-center justify-between gap-2 text-xs text-ink-300">
+                    <div className="flex items-center gap-2">
+                      <span>
+                        Pin:{' '}
+                        {j.target_q != null && j.target_r != null ? (
+                          <span className="text-cyan-300">({j.target_q}, {j.target_r})</span>
+                        ) : (
+                          <span className="italic">unpinned</span>
+                        )}
+                      </span>
+                      {selected && (
+                        <button
+                          className="btn text-xs py-1 px-2"
+                          onClick={() => updateJournal(j.id, { target_q: selected.q, target_r: selected.r })}
+                        >
+                          pin to {selectionLabel}
+                        </button>
+                      )}
+                      {j.target_q != null && (
+                        <button
+                          className="btn text-xs py-1 px-2"
+                          onClick={() => updateJournal(j.id, { target_q: null, target_r: null })}
+                        >
+                          unpin
+                        </button>
+                      )}
                     </div>
-                  )}
+                    {isMine && (
+                      <div className="flex gap-2">
+                        <button
+                          className="btn text-xs py-1 px-2"
+                          onClick={() => {
+                            setEditingId(j.id)
+                            setEditingBody(j.body)
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="btn btn-danger text-xs py-1 px-2"
+                          onClick={() => deleteJournal(j.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </li>

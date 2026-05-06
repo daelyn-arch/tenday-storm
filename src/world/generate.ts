@@ -11,14 +11,12 @@ import {
   axialDistance,
   axialKey,
   hexToPixel,
-  neighbors,
   rectCenter,
   rectHexes,
   type Axial,
 } from '../hex/coords'
-import { pickBiome, FEATURE_POOL, ENCOUNTERS } from './biomes'
-import { fakeItemName, realItemName, regionName } from './names'
-import { generateRumor } from './rumors'
+import { pickBiome, FEATURE_POOL } from './biomes'
+import { regionName } from './names'
 import { makeRng, pick, randInt, shuffle, type Rng } from './rng'
 
 export interface GenerateOptions {
@@ -44,6 +42,7 @@ export interface GeneratedWorld {
     | 'storm_r'
     | 'storm_radius'
     | 'storm_path'
+    | 'players_see_storm_next'
     | 'final_boss_q'
     | 'final_boss_r'
     | 'invite_code'
@@ -113,7 +112,11 @@ function placeRegions(
 ): RegionDraft[] {
   const land = all.filter((h) => biomes.get(axialKey(h)) !== 'ocean')
   const targetCount = Math.max(4, Math.floor(land.length / REGION_TARGET_PER_HEXES))
-  const seeds: Axial[] = [partyHex]
+  // Anchoring the first seed at the party hex makes the homeland balloon to
+  // dominate the map (every other seed gets pushed to the edges by maximin).
+  // Instead, scatter all seeds evenly via maximin and tag whichever region
+  // happens to contain the party hex as the homeland after the fact.
+  const seeds: Axial[] = [pick(rng, land)]
   while (seeds.length < targetCount) {
     let best: Axial | null = null
     let bestMin = -Infinity
@@ -129,6 +132,16 @@ function placeRegions(
     if (!best) break
     seeds.push(best)
   }
+  // Identify the seed nearest to the party — that region is the homeland.
+  let homelandIndex = 0
+  let homelandDist = Infinity
+  for (let i = 0; i < seeds.length; i++) {
+    const d = axialDistance(seeds[i], partyHex)
+    if (d < homelandDist) {
+      homelandDist = d
+      homelandIndex = i
+    }
+  }
   const drafts: RegionDraft[] = seeds.map((c, index) => ({
     index,
     centerHex: c,
@@ -138,7 +151,7 @@ function placeRegions(
       color: regionColor(index, rng),
       kingdom_lore: '',
       dm_lore: '',
-      is_homeland: index === 0,
+      is_homeland: index === homelandIndex,
     },
   }))
   for (const h of land) {
@@ -153,11 +166,43 @@ function placeRegions(
     }
     drafts[nearest].hexKeys.add(axialKey(h))
   }
+  // Cap the homeland to a small starting pocket (1-7 hexes, random) so the
+  // party doesn't begin with a giant safe zone. Keep the hexes closest to the
+  // party hex; evict the rest to whichever non-homeland seed they're nearest to.
+  const homelandCap = randInt(rng, 1, 7)
+  const homeland = drafts[homelandIndex]
+  if (homeland && homeland.hexKeys.size > homelandCap) {
+    const sorted = Array.from(homeland.hexKeys).sort((a, b) => {
+      const [aq, ar] = a.split(',').map(Number)
+      const [bq, br] = b.split(',').map(Number)
+      return (
+        axialDistance({ q: aq, r: ar }, partyHex) - axialDistance({ q: bq, r: br }, partyHex)
+      )
+    })
+    const keep = new Set(sorted.slice(0, homelandCap))
+    const evicted = sorted.slice(homelandCap)
+    for (const k of evicted) {
+      const [q, r] = k.split(',').map(Number)
+      let nearest = -1
+      let nd = Infinity
+      for (let i = 0; i < seeds.length; i++) {
+        if (i === homelandIndex) continue
+        const d = axialDistance({ q, r }, seeds[i])
+        if (d < nd) {
+          nd = d
+          nearest = i
+        }
+      }
+      if (nearest >= 0) drafts[nearest].hexKeys.add(k)
+    }
+    homeland.hexKeys = keep
+  }
+  const homelandName = drafts[homelandIndex]?.draft.name ?? 'home'
   for (const r of drafts) {
     r.draft.kingdom_lore = r.draft.is_homeland
       ? `${r.draft.name} — your homeland. Royal city, surrounding farmsteads, and the wild fringes you've grown up hearing tales about.`
       : pick(rng, [
-          `A neighboring realm beyond the reach of ${drafts[0]?.draft.name ?? 'home'}.`,
+          `A neighboring realm beyond the reach of ${homelandName}.`,
           'Travelers speak of strange customs here.',
           'Sparsely settled, the few who live here keep to themselves.',
           'Once a great kingdom, now mostly ruins and outposts.',
@@ -167,62 +212,37 @@ function placeRegions(
   return drafts
 }
 
-function pickItemHexes(
-  rng: Rng,
-  all: Axial[],
-  biomes: Map<string, Biome>,
-  partyHex: Axial,
-): Axial[] {
-  const candidates = all
-    .filter((h) => {
-      const b = biomes.get(axialKey(h))
-      return b === 'mountain' || b === 'swamp' || b === 'desert' || b === 'tundra' || b === 'forest'
-    })
-    .map((h) => ({ h, dist: axialDistance(h, partyHex) }))
-    .filter((c) => c.dist >= 4)
-    .sort((a, b) => b.dist - a.dist)
-  const top = candidates.slice(0, Math.min(40, candidates.length))
-  return shuffle(rng, top).map((c) => c.h)
-}
-
+// The storm has no trajectory — each day it teleports to a new random land hex.
+// We pre-roll maxDays of jumps so DMs (and players, if the tracker toggle is on)
+// can see the next-day destination, but past that the path stays a surprise.
+// Avoids the party's starting hex and tries not to land on the same spot twice
+// in a row, but otherwise no constraints.
 function buildStormPath(
   rng: Rng,
-  width: number,
-  height: number,
+  all: Axial[],
   partyHex: Axial,
   biomes: Map<string, Biome>,
   maxDays: number,
 ): { start: Axial; path: Axial[] } {
-  const edgeHexes: Axial[] = []
-  for (let r = 0; r < height; r++) {
-    const offset = -Math.floor(r / 2)
-    edgeHexes.push({ q: offset, r })
-    edgeHexes.push({ q: width - 1 + offset, r })
-  }
-  for (let qi = 0; qi < width; qi++) {
-    edgeHexes.push({ q: qi, r: 0 })
-    edgeHexes.push({ q: qi - Math.floor((height - 1) / 2), r: height - 1 })
-  }
-  const land = edgeHexes.filter((h) => biomes.get(axialKey(h)) !== 'ocean')
-  const start = pick(rng, land.length ? land : edgeHexes)
-  const path: Axial[] = []
-  let cur = { ...start }
-  for (let i = 0; i < maxDays; i++) {
-    path.push({ ...cur })
-    if (cur.q === partyHex.q && cur.r === partyHex.r) break
-    const ns = neighbors(cur)
-    let bestNext = ns[0]
-    let bestD = Infinity
-    for (const n of ns) {
-      const d = axialDistance(n, partyHex)
-      if (d < bestD) {
-        bestD = d
-        bestNext = n
-      }
+  const land = all.filter(
+    (h) => biomes.get(axialKey(h)) !== 'ocean' && !(h.q === partyHex.q && h.r === partyHex.r),
+  )
+  const pool = land.length ? land : all
+  function rollDistinct(prev: Axial | null): Axial {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const candidate = pick(rng, pool)
+      if (!prev || candidate.q !== prev.q || candidate.r !== prev.r) return candidate
     }
-    cur = bestNext
+    return pick(rng, pool)
   }
-  return { start, path }
+  const path: Axial[] = []
+  let prev: Axial | null = null
+  for (let i = 0; i < maxDays; i++) {
+    const next = rollDistinct(prev)
+    path.push(next)
+    prev = next
+  }
+  return { start: path[0], path }
 }
 
 export function generateWorld(opts: GenerateOptions): GeneratedWorld {
@@ -251,79 +271,26 @@ export function generateWorld(opts: GenerateOptions): GeneratedWorld {
     const k = axialKey(h)
     const biome = biomes.get(k) ?? 'plains'
     const features = shuffle(rng, FEATURE_POOL[biome] ?? []).slice(0, randInt(rng, 1, 2))
-    const encounters = shuffle(rng, ENCOUNTERS[biome] ?? [])
-      .slice(0, randInt(rng, 2, 3))
-      .map((text) => ({ weight: 1, text }))
     const isHomeland = regions[hexRegionIndex.get(k) ?? -1]?.draft.is_homeland ?? false
     return {
       q: h.q,
       r: h.r,
       biome,
       region_id: null,
-      generated: { features, encounters },
+      // Encounters are no longer auto-rolled per hex — DMs add them via the
+      // Encounters panel and assign to a tile when needed.
+      generated: { features },
       dm_notes: '',
       revealed: isHomeland,
       party_visited: h.q === partyHex.q && h.r === partyHex.r,
+      location_type: null,
     }
   })
-  const candidates = pickItemHexes(rng, all, biomes, partyHex)
-  const realCount = Math.min(10, candidates.length)
-  const fakeCount = Math.min(5, Math.max(0, candidates.length - realCount))
-  const realHexes = candidates.slice(0, realCount)
-  const fakeHexes = candidates.slice(realCount, realCount + fakeCount)
+  // Items + rumors are intentionally DM-driven now: the wizard creates none,
+  // and the DM populates them via the Items / Rumors panels at play time.
   const items: Omit<ItemRow, 'campaign_id' | 'id'>[] = []
-  const itemRegionIdx: (number | null)[] = []
-  for (const h of realHexes) {
-    items.push({
-      name: realItemName(rng),
-      description: '',
-      hex_q: h.q,
-      hex_r: h.r,
-      is_real: true,
-      discovered: false,
-      in_party_inventory: false,
-    })
-    itemRegionIdx.push(hexRegionIndex.get(axialKey(h)) ?? null)
-  }
-  for (const h of fakeHexes) {
-    items.push({
-      name: fakeItemName(rng),
-      description: '',
-      hex_q: h.q,
-      hex_r: h.r,
-      is_real: false,
-      discovered: false,
-      in_party_inventory: false,
-    })
-    itemRegionIdx.push(hexRegionIndex.get(axialKey(h)) ?? null)
-  }
   const rumors: GeneratedWorld['rumors'] = []
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
-    const ridx = itemRegionIdx[i]
-    const itemRegion = ridx != null ? regions[ridx].draft : undefined
-    const sources = shuffle(rng, regions).slice(0, randInt(rng, 1, 3))
-    for (const src of sources) {
-      const text = generateRumor(
-        {
-          item: { name: item.name, is_real: item.is_real },
-          itemRegion: itemRegion as RegionRow | undefined,
-          allRegions: regions.map((r) => r.draft as RegionRow),
-        },
-        src.draft as RegionRow,
-        rng,
-      )
-      rumors.push({
-        text,
-        is_true: item.is_real,
-        target_q: item.hex_q,
-        target_r: item.hex_r,
-        collected: false,
-        source_region_index: src.index,
-      })
-    }
-  }
-  const storm = buildStormPath(rng, opts.width, opts.height, partyHex, biomes, maxDays)
+  const storm = buildStormPath(rng, all, partyHex, biomes, maxDays)
   const code = Array.from({ length: 6 }, () =>
     'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(rng() * 32)],
   ).join('')
@@ -340,8 +307,9 @@ export function generateWorld(opts: GenerateOptions): GeneratedWorld {
       party_r: partyHex.r,
       storm_q: storm.start.q,
       storm_r: storm.start.r,
-      storm_radius: 1,
+      storm_radius: 3,
       storm_path: storm.path,
+      players_see_storm_next: false,
       final_boss_q: finalBoss.q,
       final_boss_r: finalBoss.r,
       invite_code: code,
