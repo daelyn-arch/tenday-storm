@@ -426,6 +426,59 @@ function unifyRegionBiomes(
   smoothDeserts(biomes, all)
 }
 
+// Guarantee every biome appears at least once on the map. After region
+// unification it's common for entire biomes (especially desert, swamp,
+// tundra) to be missing on a given seed; this function locates a single
+// suitable hex per missing biome and converts it. Order matters — mountain
+// must exist before tundra, since tundra requires a mountain neighbor.
+function ensureAllBiomes(biomes: Map<string, Biome>, all: Axial[], rng: Rng) {
+  // ocean is guaranteed by the perimeter rule; skip.
+  const order: Biome[] = ['mountain', 'coast', 'tundra', 'desert', 'swamp', 'forest', 'hills', 'plains']
+  for (const target of order) {
+    let present = false
+    for (const v of biomes.values()) {
+      if (v === target) {
+        present = true
+        break
+      }
+    }
+    if (present) continue
+    const candidates: Axial[] = []
+    for (const h of all) {
+      const cur = biomes.get(axialKey(h))
+      // Never overwrite ocean / mountain / tundra / coast — those are precious
+      // geographic features that we don't want to lose just to add another biome.
+      if (!cur || cur === 'ocean' || cur === 'mountain' || cur === 'tundra' || cur === 'coast') continue
+      const ns = neighbors(h)
+      let ok = false
+      switch (target) {
+        case 'coast':
+          // Must be adjacent to ocean.
+          ok = ns.some((n) => biomes.get(axialKey(n)) === 'ocean')
+          break
+        case 'tundra':
+          // Must be adjacent to mountain (so we don't break the tundra rule)
+          // AND must not be adjacent to desert (so we don't create a clash).
+          ok =
+            ns.some((n) => biomes.get(axialKey(n)) === 'mountain') &&
+            !ns.some((n) => biomes.get(axialKey(n)) === 'desert')
+          break
+        case 'desert':
+          // Must NOT be next to tundra.
+          ok = !ns.some((n) => biomes.get(axialKey(n)) === 'tundra')
+          break
+        default:
+          ok = true
+          break
+      }
+      if (ok) candidates.push(h)
+    }
+    if (candidates.length) {
+      biomes.set(axialKey(pick(rng, candidates)), target)
+    }
+  }
+}
+
 // Rivers always start at a mountain hex (the source) and flow downhill to a
 // shoreline (a land tile adjacent to ocean), winding through other land
 // (mountains and ocean impassable along the route). At the shoreline endpoint
@@ -598,6 +651,7 @@ export function generateWorld(opts: GenerateOptions): GeneratedWorld {
   const hexRegionIndex = new Map<string, number>()
   regions.forEach((r) => r.hexKeys.forEach((k) => hexRegionIndex.set(k, r.index)))
   unifyRegionBiomes(regions, biomes, opts.height, rng)
+  ensureAllBiomes(biomes, all, rng)
   const rivers = generateRivers(rng, all, biomes)
   const hexRows: Omit<HexRow, 'campaign_id'>[] = all.map((h) => {
     const k = axialKey(h)

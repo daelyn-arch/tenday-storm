@@ -35,6 +35,7 @@ interface SeedReport {
   riverHexes: number
   desertHexes: number
   tundraHexes: number
+  missingBiomes: string[]
 }
 
 const reports: SeedReport[] = []
@@ -200,6 +201,11 @@ for (const seed of SEEDS) {
     if (!hasMountain) riverSourcesNotMountain++
   }
 
+  // 8. Every biome appears at least once.
+  const allBiomes = ['ocean', 'coast', 'plains', 'forest', 'hills', 'mountain', 'desert', 'swamp', 'tundra']
+  const present = new Set(w.hexes.map((h) => h.biome))
+  const missingBiomes = allBiomes.filter((b) => !present.has(b as never))
+
   reports.push({
     seed,
     badClusters,
@@ -214,6 +220,7 @@ for (const seed of SEEDS) {
     riverHexes,
     desertHexes: w.hexes.filter((h) => h.biome === 'desert').length,
     tundraHexes: w.hexes.filter((h) => h.biome === 'tundra').length,
+    missingBiomes,
   })
 }
 
@@ -226,7 +233,8 @@ const pass = reports.filter(
     r.perimeterNonOcean === 0 &&
     r.inlandCoast === 0 &&
     r.badRiverEndpoints === 0 &&
-    r.riverSourcesNotMountain === 0,
+    r.riverSourcesNotMountain === 0 &&
+    r.missingBiomes.length === 0,
 )
 const fail = reports.filter((r) => !pass.includes(r))
 
@@ -264,6 +272,7 @@ if (fail.length) {
     if (f.badRiverEndpoints > 0) reasons.push(`${f.badRiverEndpoints} river endpoint(s) malformed`)
     if (f.riverSourcesNotMountain > 0)
       reasons.push(`${f.riverSourcesNotMountain} river chain(s) without mountain source`)
+    if (f.missingBiomes.length > 0) reasons.push(`missing biomes: ${f.missingBiomes.join(', ')}`)
     console.log(`  seed ${f.seed}: ${reasons.join(', ')}`)
   }
   process.exit(1)
