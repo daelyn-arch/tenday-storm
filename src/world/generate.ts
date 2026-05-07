@@ -8,9 +8,11 @@ import type {
   RumorRow,
 } from '../types/db'
 import {
+  NEIGHBORS,
   axialDistance,
   axialKey,
   hexToPixel,
+  neighbors,
   rectCenter,
   rectHexes,
   type Axial,
@@ -87,6 +89,7 @@ function generateBiomes(opts: GenerateOptions, all: Axial[]): Map<string, Biome>
   const out = new Map<string, Biome>()
   const ef = 0.085
   const mf = 0.13
+  const inBounds = new Set(all.map(axialKey))
   for (const h of all) {
     const { x, y } = hexToPixel(h, 1)
     const e0 = (elev(x * ef, y * ef) + 1) / 2
@@ -96,7 +99,161 @@ function generateBiomes(opts: GenerateOptions, all: Axial[]): Map<string, Biome>
     const lat = Math.abs(h.r - opts.height / 2) / (opts.height / 2)
     out.set(axialKey(h), pickBiome(elevation, m0, lat))
   }
+  // Force the entire map perimeter to ocean — every edge tile is sea, so the
+  // landmass always sits framed by water.
+  for (const h of all) {
+    for (const n of neighbors(h)) {
+      if (!inBounds.has(axialKey(n))) {
+        out.set(axialKey(h), 'ocean')
+        break
+      }
+    }
+  }
+  // Tundra only exists near mountains (cold peaks bleed ice/snow into the
+  // surrounding tiles). Any tundra hex without a mountain neighbor demotes
+  // to plains.
+  for (const h of all) {
+    if (out.get(axialKey(h)) !== 'tundra') continue
+    let mountainAdj = false
+    for (const n of neighbors(h)) {
+      if (out.get(axialKey(n)) === 'mountain') {
+        mountainAdj = true
+        break
+      }
+    }
+    if (!mountainAdj) out.set(axialKey(h), 'plains')
+  }
+  // Hard rule: desert can never neighbor tundra (any clash → desert demotes
+  // to plains, since tundra's mountain anchor is the more meaningful feature).
+  for (const h of all) {
+    if (out.get(axialKey(h)) !== 'desert') continue
+    for (const n of neighbors(h)) {
+      if (out.get(axialKey(n)) === 'tundra') {
+        out.set(axialKey(h), 'plains')
+        break
+      }
+    }
+  }
+  // Coast tiles should sit on an actual shoreline. Strip any coast hex that
+  // isn't adjacent to ocean.
+  for (const h of all) {
+    if (out.get(axialKey(h)) !== 'coast') continue
+    let oceanAdj = false
+    for (const n of neighbors(h)) {
+      if (out.get(axialKey(n)) === 'ocean') {
+        oceanAdj = true
+        break
+      }
+    }
+    if (!oceanAdj) out.set(axialKey(h), 'plains')
+  }
+  // Smooth speckly swamp biomes (tiny isolated patches look like noise).
+  eraseSmallClusters(out, all, 'swamp', 3)
+  smoothDeserts(out, all)
   return out
+}
+
+// Desert rule:
+//   - Clusters of 2-3 hexes look like fragmented noise → demote to plains.
+//   - Clusters of size 1 or 4+ are kept.
+//   - Every pair of remaining desert clusters must be at least 5 hexes apart;
+//     when two clusters sit closer than that the smaller of the two is
+//     demoted, then we re-scan in case the demotion made another pair valid.
+//     This catches solo-near-solo, solo-near-tract, AND tract-near-tract.
+function smoothDeserts(biomes: Map<string, Biome>, all: Axial[]) {
+  const minDistance = 5
+
+  function findClusters(): Axial[][] {
+    const clusters: Axial[][] = []
+    const visited = new Set<string>()
+    for (const h of all) {
+      if (biomes.get(axialKey(h)) !== 'desert' || visited.has(axialKey(h))) continue
+      const cluster: Axial[] = []
+      const queue = [h]
+      visited.add(axialKey(h))
+      while (queue.length) {
+        const cur = queue.shift()!
+        cluster.push(cur)
+        for (const n of neighbors(cur)) {
+          const nk = axialKey(n)
+          if (visited.has(nk) || biomes.get(nk) !== 'desert') continue
+          visited.add(nk)
+          queue.push(n)
+        }
+      }
+      clusters.push(cluster)
+    }
+    return clusters
+  }
+
+  function demote(cluster: Axial[]) {
+    for (const h of cluster) biomes.set(axialKey(h), 'plains')
+  }
+
+  function clustersDistance(a: Axial[], b: Axial[]): number {
+    let min = Infinity
+    for (const ha of a) {
+      for (const hb of b) {
+        const d = axialDistance(ha, hb)
+        if (d < min) min = d
+      }
+    }
+    return min
+  }
+
+  // Pass 1: nuke 2-3 sized clusters.
+  for (const c of findClusters()) {
+    if (c.length >= 2 && c.length < 4) demote(c)
+  }
+
+  // Pass 2: iteratively enforce inter-cluster spacing.
+  let changed = true
+  while (changed) {
+    changed = false
+    const clusters = findClusters()
+    for (let i = 0; i < clusters.length && !changed; i++) {
+      for (let j = i + 1; j < clusters.length; j++) {
+        if (clustersDistance(clusters[i], clusters[j]) < minDistance) {
+          if (clusters[i].length <= clusters[j].length) demote(clusters[i])
+          else demote(clusters[j])
+          changed = true
+          break
+        }
+      }
+    }
+  }
+}
+
+function eraseSmallClusters(
+  biomes: Map<string, Biome>,
+  all: Axial[],
+  target: Biome,
+  minSize: number,
+  replacement: Biome = 'plains',
+) {
+  const visited = new Set<string>()
+  for (const h of all) {
+    const k = axialKey(h)
+    if (visited.has(k)) continue
+    if (biomes.get(k) !== target) continue
+    const cluster: Axial[] = []
+    const queue: Axial[] = [h]
+    visited.add(k)
+    while (queue.length) {
+      const cur = queue.shift()!
+      cluster.push(cur)
+      for (const n of neighbors(cur)) {
+        const nk = axialKey(n)
+        if (visited.has(nk)) continue
+        if (biomes.get(nk) !== target) continue
+        visited.add(nk)
+        queue.push(n)
+      }
+    }
+    if (cluster.length < minSize) {
+      for (const c of cluster) biomes.set(axialKey(c), replacement)
+    }
+  }
 }
 
 function regionColor(index: number, rng: Rng): string {
@@ -212,6 +369,122 @@ function placeRegions(
   return drafts
 }
 
+// Rivers always start at a mountain hex (the source) and flow downhill to a
+// shoreline (a land tile adjacent to ocean), winding through other land
+// (mountains and ocean impassable along the route). At the shoreline endpoint
+// we add the ocean-facing edge so the river visually empties into the sea.
+function generateRivers(
+  rng: Rng,
+  all: Axial[],
+  biomes: Map<string, Biome>,
+): Map<string, number[]> {
+  const out = new Map<string, number[]>()
+  const inBounds = new Set(all.map((h) => axialKey(h)))
+
+  const mountains = all.filter((h) => biomes.get(axialKey(h)) === 'mountain')
+  if (!mountains.length) return out
+
+  // Cache the first ocean-facing edge of each shoreline (land adjacent to
+  // ocean) hex so we can flow the river visually into the sea at the end.
+  const oceanEdgeByHex = new Map<string, number>()
+  for (const h of all) {
+    const b = biomes.get(axialKey(h))
+    if (!b || b === 'ocean' || b === 'mountain') continue
+    for (let e = 0; e < NEIGHBORS.length; e++) {
+      const n = { q: h.q + NEIGHBORS[e].q, r: h.r + NEIGHBORS[e].r }
+      if (biomes.get(axialKey(n)) === 'ocean') {
+        oceanEdgeByHex.set(axialKey(h), e)
+        break
+      }
+    }
+  }
+  if (oceanEdgeByHex.size === 0) return out
+  const shorelineKeys = new Set(oceanEdgeByHex.keys())
+
+  function dirFromTo(from: Axial, to: Axial): number {
+    for (let i = 0; i < NEIGHBORS.length; i++) {
+      if (from.q + NEIGHBORS[i].q === to.q && from.r + NEIGHBORS[i].r === to.r) return i
+    }
+    return -1
+  }
+
+  // BFS from a mountain source to the nearest shoreline hex. The mountain
+  // start is included in the path; subsequent hexes must be land (no
+  // mountains, no ocean).
+  function bfsFromMountain(start: Axial): Axial[] | null {
+    const visited = new Set<string>([axialKey(start)])
+    type Node = { hex: Axial; parent: Node | null }
+    const queue: Node[] = [{ hex: start, parent: null }]
+    while (queue.length) {
+      const node = queue.shift()!
+      for (const n of neighbors(node.hex)) {
+        const nk = axialKey(n)
+        if (!inBounds.has(nk) || visited.has(nk)) continue
+        const b = biomes.get(nk)
+        if (!b) continue
+        if (b === 'mountain' || b === 'ocean') continue
+        visited.add(nk)
+        if (shorelineKeys.has(nk)) {
+          const path: Axial[] = [n]
+          let cur: Node | null = node
+          while (cur) {
+            path.unshift(cur.hex)
+            cur = cur.parent
+          }
+          return path
+        }
+        queue.push({ hex: n, parent: node })
+      }
+    }
+    return null
+  }
+
+  const sourceCount = randInt(rng, 2, 4)
+  const candidatePool = shuffle(rng, mountains)
+  const used: Axial[] = []
+
+  for (const src of candidatePool) {
+    if (used.length >= sourceCount) break
+    if (used.some((u) => axialDistance(u, src) < 4)) continue
+
+    const path = bfsFromMountain(src)
+    if (!path || path.length < 2) continue
+
+    // Mark edges along the path.
+    for (let i = 0; i < path.length; i++) {
+      const cur = path[i]
+      const k = axialKey(cur)
+      const edges = out.get(k) ?? []
+      if (i > 0) {
+        const d = dirFromTo(cur, path[i - 1])
+        if (d >= 0 && !edges.includes(d)) edges.push(d)
+      }
+      if (i < path.length - 1) {
+        const d = dirFromTo(cur, path[i + 1])
+        if (d >= 0 && !edges.includes(d)) edges.push(d)
+      }
+      out.set(k, edges)
+    }
+
+    // Shoreline endpoint: add the ocean-facing edge so the river visually
+    // empties into the sea. Mountain endpoint just renders as a stub at the
+    // peak (no extra edge added — looks like the river bursting from a glacier).
+    {
+      const endpoint = path[path.length - 1]
+      const k = axialKey(endpoint)
+      const oceanEdge = oceanEdgeByHex.get(k)
+      if (oceanEdge != null) {
+        const edges = out.get(k) ?? []
+        if (!edges.includes(oceanEdge)) edges.push(oceanEdge)
+        out.set(k, edges)
+      }
+    }
+
+    used.push(src)
+  }
+  return out
+}
+
 // The storm has no trajectory — each day it teleports to a new random land hex.
 // We pre-roll maxDays of jumps so DMs (and players, if the tracker toggle is on)
 // can see the next-day destination, but past that the path stays a surprise.
@@ -267,11 +540,13 @@ export function generateWorld(opts: GenerateOptions): GeneratedWorld {
   const regions = placeRegions(rng, all, biomes, partyHex)
   const hexRegionIndex = new Map<string, number>()
   regions.forEach((r) => r.hexKeys.forEach((k) => hexRegionIndex.set(k, r.index)))
+  const rivers = generateRivers(rng, all, biomes)
   const hexRows: Omit<HexRow, 'campaign_id'>[] = all.map((h) => {
     const k = axialKey(h)
     const biome = biomes.get(k) ?? 'plains'
     const features = shuffle(rng, FEATURE_POOL[biome] ?? []).slice(0, randInt(rng, 1, 2))
     const isHomeland = regions[hexRegionIndex.get(k) ?? -1]?.draft.is_homeland ?? false
+    const riverEdges = rivers.get(k)
     return {
       q: h.q,
       r: h.r,
@@ -279,7 +554,7 @@ export function generateWorld(opts: GenerateOptions): GeneratedWorld {
       region_id: null,
       // Encounters are no longer auto-rolled per hex — DMs add them via the
       // Encounters panel and assign to a tile when needed.
-      generated: { features },
+      generated: riverEdges ? { features, rivers: riverEdges } : { features },
       dm_notes: '',
       revealed: isHomeland,
       party_visited: h.q === partyHex.q && h.r === partyHex.r,

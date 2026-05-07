@@ -62,7 +62,12 @@ export interface HexRow {
   r: number
   biome: Biome
   region_id: string | null
-  generated: { features?: string[]; encounters?: { weight: number; text: string }[] }
+  generated: {
+    features?: string[]
+    encounters?: { weight: number; text: string }[]
+    /** Edge indexes (0-5) where a river enters/exits this hex. */
+    rivers?: number[]
+  }
   dm_notes: string
   revealed: boolean
   party_visited: boolean

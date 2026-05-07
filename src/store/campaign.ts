@@ -36,6 +36,8 @@ export interface CampaignState {
   // DM actions
   updateHex: (q: number, r: number, patch: Partial<HexRow>) => Promise<void>
   updateCampaign: (patch: Partial<CampaignRow>) => Promise<void>
+  /** Permanently deletes the campaign and (via cascade) every related row. */
+  deleteCampaign: () => Promise<{ error: string | null }>
   endDay: () => Promise<void>
   moveParty: (to: Axial) => Promise<void>
 
@@ -181,6 +183,18 @@ export const useCampaign = create<CampaignState>((set, get) => ({
     set((s) => (s.campaign ? { campaign: { ...s.campaign, ...patch } } : {}))
     const { error } = await supabase.from('campaigns').update(patch).eq('id', id)
     if (error) console.error('updateCampaign failed', error)
+  },
+
+  deleteCampaign: async () => {
+    const id = get().campaignId
+    if (!id) return { error: 'no campaign loaded' }
+    const { error } = await supabase.from('campaigns').delete().eq('id', id)
+    if (error) {
+      console.error('deleteCampaign failed', error)
+      return { error: error.message }
+    }
+    get().reset()
+    return { error: null }
   },
 
   endDay: async () => {

@@ -219,7 +219,7 @@ export function HexMap(props: HexMapProps) {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden bg-ink-900 select-none"
+      className="relative w-full h-full overflow-hidden bg-ink-300 select-none"
       onMouseDown={(e) => {
         if (e.button !== 0) return
         // Only start drag if not on a hex (i.e., target is the svg background).
@@ -306,6 +306,61 @@ export function HexMap(props: HexMapProps) {
             <path key={i} d={s.d} stroke={s.color} strokeWidth={2.5} strokeLinecap="round" fill="none" opacity={0.85} />
           ))}
 
+          {/* Rivers — smooth blue curves through hexes that have river edges
+              defined in their generated payload. Hidden on unrevealed hexes
+              for players (rivers are geographical, but consistent with fog). */}
+          {hexes.map((h) => {
+            const edges = (h.generated?.rivers ?? []) as number[]
+            if (edges.length === 0) return null
+            if (mode === 'player' && !h.revealed) return null
+            const center = hexToPixel({ q: h.q, r: h.r })
+            const corners = hexCorners(center.x, center.y)
+            const edgeMid = (e: number) => {
+              const a = corners[e]
+              const b = corners[(e + 1) % 6]
+              return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+            }
+            const stroke = '#3a7bc8'
+            const strokeW = 2.6
+            // 2 edges → smooth quadratic curve through the center.
+            // 1 edge → short stub from edge midpoint to center (river end).
+            // 3+ edges → spoke from each edge midpoint to center.
+            if (edges.length === 2) {
+              const a = edgeMid(edges[0])
+              const b = edgeMid(edges[1])
+              return (
+                <path
+                  key={`riv-${axialKey(h)}`}
+                  d={`M ${a.x} ${a.y} Q ${center.x} ${center.y} ${b.x} ${b.y}`}
+                  stroke={stroke}
+                  strokeWidth={strokeW}
+                  fill="none"
+                  strokeLinecap="round"
+                  pointerEvents="none"
+                />
+              )
+            }
+            return (
+              <g key={`riv-${axialKey(h)}`} pointerEvents="none">
+                {edges.map((e, i) => {
+                  const m = edgeMid(e)
+                  return (
+                    <line
+                      key={i}
+                      x1={m.x}
+                      y1={m.y}
+                      x2={center.x}
+                      y2={center.y}
+                      stroke={stroke}
+                      strokeWidth={strokeW}
+                      strokeLinecap="round"
+                    />
+                  )
+                })}
+              </g>
+            )
+          })}
+
           {/* Location icons (village / city / temple / etc.). Players only see
               icons on revealed hexes — unrevealed landmarks stay secret. */}
           {hexes.map((h) => {
@@ -360,14 +415,17 @@ export function HexMap(props: HexMapProps) {
               />
               <text
                 x={nextStormCenter.x}
-                y={nextStormCenter.y - stormPixelRadius - 6}
+                y={nextStormCenter.y}
                 textAnchor="middle"
-                fontSize={11}
+                dominantBaseline="middle"
+                fontSize={Math.max(14, HEX_SIZE * 0.55)}
+                fontWeight="bold"
                 fill="#c9b3e6"
                 fontFamily="Cinzel, serif"
-                style={{ paintOrder: 'stroke', stroke: '#000a', strokeWidth: 3, strokeLinejoin: 'round' }}
+                letterSpacing="0.15em"
+                style={{ paintOrder: 'stroke', stroke: '#000c', strokeWidth: 4, strokeLinejoin: 'round' }}
               >
-                next
+                NEXT
               </text>
             </g>
           )}

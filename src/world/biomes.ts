@@ -14,7 +14,9 @@ export const BIOMES: Biome[] = [
 
 export const BIOME_COLOR: Record<Biome, string> = {
   ocean: '#1a3550',
-  coast: '#c9b271',
+  // Coast is a pale beach sand — clearly lighter than desert so the two read
+  // as different biomes at any zoom.
+  coast: '#f0e2b8',
   plains: '#8aa45a',
   forest: '#3d6a3a',
   hills: '#7a8a4a',
@@ -48,14 +50,31 @@ export const BIOME_PASSABLE: Record<Biome, boolean> = {
   tundra: true,
 }
 
-// Pick biome from elevation (0..1) and moisture (0..1).
+// Pick biome from elevation (0..1), moisture (0..1), and latitudeFactor (0..1
+// where 0 = equator-ish middle of the map and 1 = polar edge).
+//
+// Biomes are gated by climate band so adjacent hexes never jump from cold to
+// hot: tundra only spawns in the high-latitude band, desert only in the
+// low-latitude band, with a temperate buffer between them. That guarantees
+// at least a few rows of plains/forest separate any tundra from any desert.
 export function pickBiome(elevation: number, moisture: number, latitudeFactor: number): Biome {
   if (elevation < 0.32) return 'ocean'
   if (elevation < 0.38) return 'coast'
-  if (latitudeFactor > 0.85) return 'tundra'
   if (elevation > 0.82) return 'mountain'
-  if (elevation > 0.66) return 'hills'
-  if (moisture < 0.28) return 'desert'
+  if (elevation > 0.66) return latitudeFactor > 0.65 ? 'mountain' : 'hills'
+
+  if (latitudeFactor > 0.65) {
+    // Cold band: boreal forest where wet, tundra elsewhere. No desert here.
+    return moisture > 0.55 ? 'forest' : 'tundra'
+  }
+  if (latitudeFactor < 0.35) {
+    // Warm band: desert when dry, swamp when very wet, otherwise forest/plains.
+    if (moisture < 0.3) return 'desert'
+    if (moisture > 0.78) return 'swamp'
+    if (moisture > 0.55) return 'forest'
+    return 'plains'
+  }
+  // Temperate buffer: no tundra, no desert.
   if (moisture > 0.78) return 'swamp'
   if (moisture > 0.55) return 'forest'
   return 'plains'

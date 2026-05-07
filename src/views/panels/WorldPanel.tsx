@@ -1,10 +1,16 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useCampaign } from '../../store/campaign'
 import { axialDistance } from '../../hex/coords'
 
 export function WorldPanel() {
-  const { campaign, endDay, hexes, updateCampaign } = useCampaign()
+  const navigate = useNavigate()
+  const { campaign, endDay, hexes, updateCampaign, deleteCampaign } = useCampaign()
   const [confirming, setConfirming] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteInput, setDeleteInput] = useState('')
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   if (!campaign) return null
   const stormDist = axialDistance(
     { q: campaign.party_q, r: campaign.party_r },
@@ -106,6 +112,67 @@ export function WorldPanel() {
           >
             Reroll next jump
           </button>
+        )}
+      </div>
+
+      <div className="panel p-3 space-y-2 border border-red-500/40">
+        <div className="font-display text-base text-red-300">Danger zone</div>
+        <div className="text-xs text-ink-300">
+          Permanently delete this campaign and everything in it (hexes, regions,
+          quests, rumors, encounters, items, journal entries, members). This
+          cannot be undone.
+        </div>
+        {!deleteOpen ? (
+          <button className="btn btn-danger w-full" onClick={() => setDeleteOpen(true)}>
+            Delete campaign
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <div className="text-xs text-ink-200">
+              Type <span className="text-red-300 font-display">{campaign.name}</span> to confirm:
+            </div>
+            <input
+              className="input"
+              autoFocus
+              value={deleteInput}
+              placeholder={campaign.name}
+              onChange={(e) => {
+                setDeleteInput(e.target.value)
+                setDeleteError(null)
+              }}
+            />
+            {deleteError && <div className="text-xs text-red-400">{deleteError}</div>}
+            <div className="flex gap-2">
+              <button
+                className="btn btn-danger"
+                disabled={deleteInput !== campaign.name || deleting}
+                onClick={async () => {
+                  setDeleting(true)
+                  setDeleteError(null)
+                  const { error } = await deleteCampaign()
+                  if (error) {
+                    setDeleting(false)
+                    setDeleteError(error)
+                    return
+                  }
+                  navigate('/')
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Permanently delete'}
+              </button>
+              <button
+                className="btn"
+                disabled={deleting}
+                onClick={() => {
+                  setDeleteOpen(false)
+                  setDeleteInput('')
+                  setDeleteError(null)
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         )}
       </div>
     </div>
