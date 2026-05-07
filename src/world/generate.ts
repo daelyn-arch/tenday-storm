@@ -64,6 +64,8 @@ interface RegionDraft {
   centerHex: Axial
   hexKeys: Set<string>
   draft: Omit<RegionRow, 'campaign_id' | 'id'>
+  /** Primary biome assigned to this region (set during unifyRegionBiomes). */
+  primaryBiome?: Biome
 }
 
 const REGION_TARGET_PER_HEXES = 32
@@ -369,6 +371,61 @@ function placeRegions(
   return drafts
 }
 
+// Each region gets a deliberate primary biome based on the climate band of
+// its center, so the map reads as "the desert kingdom", "the forest realm",
+// "the swamp wastes", etc. Every "soft" land hex inside the region is
+// overwritten to that biome. Geographical features — ocean, coast, mountain,
+// tundra — are preserved because they reflect the underlying terrain, not
+// regional culture. After unification, any new desert hex bordering tundra
+// demotes to plains so the no-clash rule still holds.
+function unifyRegionBiomes(
+  regions: RegionDraft[],
+  biomes: Map<string, Biome>,
+  height: number,
+  rng: Rng,
+) {
+  const PROTECTED: Biome[] = ['ocean', 'coast', 'mountain', 'tundra']
+  for (const region of regions) {
+    const lat = Math.abs(region.centerHex.r - height / 2) / (height / 2)
+    let pool: Biome[]
+    if (lat > 0.6) {
+      // Cold band — boreal-ish.
+      pool = ['forest', 'plains', 'hills']
+    } else if (lat < 0.35) {
+      // Warm band — desert is on the table.
+      pool = ['desert', 'plains', 'forest', 'swamp']
+    } else {
+      // Temperate band.
+      pool = ['plains', 'forest', 'hills', 'swamp']
+    }
+    const primary = pick(rng, pool)
+    region.primaryBiome = primary
+    for (const k of region.hexKeys) {
+      const b = biomes.get(k)
+      if (!b || PROTECTED.includes(b)) continue
+      biomes.set(k, primary)
+    }
+  }
+  // Cleanup: any desert hex sitting next to tundra demotes back to plains.
+  for (const k of Array.from(biomes.keys())) {
+    if (biomes.get(k) !== 'desert') continue
+    const [q, r] = k.split(',').map(Number)
+    for (const n of neighbors({ q, r })) {
+      if (biomes.get(axialKey(n)) === 'tundra') {
+        biomes.set(k, 'plains')
+        break
+      }
+    }
+  }
+  // Re-run desert smoothing now that region unification may have created
+  // small clusters or pairs that previously didn't exist.
+  const all = Array.from(biomes.keys()).map((k) => {
+    const [q, r] = k.split(',').map(Number)
+    return { q, r }
+  })
+  smoothDeserts(biomes, all)
+}
+
 // Rivers always start at a mountain hex (the source) and flow downhill to a
 // shoreline (a land tile adjacent to ocean), winding through other land
 // (mountains and ocean impassable along the route). At the shoreline endpoint
@@ -540,6 +597,7 @@ export function generateWorld(opts: GenerateOptions): GeneratedWorld {
   const regions = placeRegions(rng, all, biomes, partyHex)
   const hexRegionIndex = new Map<string, number>()
   regions.forEach((r) => r.hexKeys.forEach((k) => hexRegionIndex.set(k, r.index)))
+  unifyRegionBiomes(regions, biomes, opts.height, rng)
   const rivers = generateRivers(rng, all, biomes)
   const hexRows: Omit<HexRow, 'campaign_id'>[] = all.map((h) => {
     const k = axialKey(h)
