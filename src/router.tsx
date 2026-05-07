@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createHashRouter, Navigate } from 'react-router-dom'
 import { Landing } from './views/Landing'
 import { SetupWizard } from './views/SetupWizard'
 import { DmView } from './views/DmView'
@@ -6,7 +6,9 @@ import { PlayerView } from './views/PlayerView'
 import { JoinCampaign } from './views/JoinCampaign'
 import { AuthGate } from './views/AuthGate'
 
-export const router = createBrowserRouter([
+// Hash router: paths live in the URL fragment (e.g. /#/c/abc/dm) so GitHub
+// Pages — which only serves static files — never 404s on a deep link.
+export const router = createHashRouter([
   {
     path: '/',
     element: <AuthGate />,

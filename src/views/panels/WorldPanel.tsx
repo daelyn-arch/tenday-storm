@@ -18,7 +18,9 @@ export function WorldPanel() {
   )
   const stormEdgeDist = Math.max(0, stormDist - campaign.storm_radius)
   const next = campaign.storm_path[campaign.day] ?? null
-  const inviteUrl = `${window.location.origin}/c/${campaign.id}/join?code=${campaign.invite_code}`
+  // Build the invite URL using Vite's BASE_URL + a hash route so it works
+  // both at root (vercel/local dev) and under a sub-path (GitHub Pages).
+  const inviteUrl = `${window.location.origin}${import.meta.env.BASE_URL}#/c/${campaign.id}/join?code=${campaign.invite_code}`
   const revealed = hexes.filter((h) => h.revealed).length
   return (
     <div className="p-4 space-y-4 text-sm overflow-y-auto h-full">
