@@ -430,13 +430,14 @@ export function HexMap(props: HexMapProps) {
             </g>
           )}
 
-          {/* Storm overlay */}
+          {/* Storm overlay — flat purple fill + solid ring so the storm is
+              unambiguously visible and bounded. */}
           <circle
             cx={stormCenter.x}
             cy={stormCenter.y}
             r={stormPixelRadius}
-            fill="url(#stormGrad)"
-            opacity={0.55}
+            fill="#6b4e9a"
+            opacity={0.45}
             pointerEvents="none"
           />
           <circle
@@ -444,9 +445,8 @@ export function HexMap(props: HexMapProps) {
             cy={stormCenter.y}
             r={stormPixelRadius}
             fill="none"
-            stroke="#9a7fbf"
-            strokeWidth={2}
-            strokeDasharray="4 4"
+            stroke="#6b4e9a"
+            strokeWidth={3}
             pointerEvents="none"
           />
 
