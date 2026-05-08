@@ -25,3 +25,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Texture sources — only the processed JPGs in public/textures/ should be
+# committed; raw Poly Haven zips and partial downloads bloat the repo.
+public/textures/**/*.blend.zip
+public/textures/**/*.blend
+**/*.crdownload
