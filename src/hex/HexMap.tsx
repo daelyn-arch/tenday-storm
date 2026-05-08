@@ -79,6 +79,59 @@ const BIOME_WEIGHTS: Partial<Record<Biome, number[]>> = {
 const TREE_VARIANTS = ['tree_0', 'tree_1', 'tree_2', 'tree_3', 'tree_4']
 const ROCK_VARIANTS = ['rock_0', 'rock_1']
 
+// Autotile lookup. Keys are "TL,TR,BL,BR" terrain codes:
+// 1 = grass (any non-coast non-ocean land), 5 = water, 6 = beach.
+// Values are tile filenames (matching scripts/slice-pita-autotile.ts output).
+const AUTOTILE: Record<string, string> = {
+  // (1,5) grass-water
+  '1,1,1,1': 't1',
+  '1,1,1,5': 't420',
+  '1,1,5,1': 't422',
+  '1,5,1,1': 't500',
+  '5,1,1,1': 't502',
+  '1,1,5,5': 't421',
+  '1,5,1,5': 't460',
+  '1,5,5,1': 't503',
+  '5,1,1,5': 't504',
+  '5,1,5,1': 't462',
+  '5,5,1,1': 't501',
+  '1,5,5,5': 't423',
+  '5,1,5,5': 't424',
+  '5,5,1,5': 't463',
+  '5,5,5,1': 't464',
+  // (5,6) beach-water
+  '6,6,6,5': 't660',
+  '6,6,5,6': 't662',
+  '6,5,6,6': 't740',
+  '5,6,6,6': 't742',
+  '6,6,5,5': 't661',
+  '6,5,6,5': 't700',
+  '5,6,6,5': 't744',
+  '6,5,5,6': 't743',
+  '5,6,5,6': 't702',
+  '5,5,6,6': 't741',
+  '6,5,5,5': 't663',
+  '5,6,5,5': 't664',
+  '5,5,6,5': 't703',
+  '5,5,5,6': 't704',
+  '6,6,6,6': 't681',
+  // (1,5,6) tri-corner
+  '5,5,1,6': 't340',
+  '5,5,6,1': 't341',
+  '5,1,5,6': 't342',
+  '1,5,6,5': 't343',
+  '1,6,5,5': 't380',
+  '6,1,5,5': 't381',
+  '5,6,5,1': 't382',
+  '6,5,1,5': 't383',
+}
+
+type CornerColor = 'water' | 'beach' | 'grass'
+
+function cornerTerrainCode(c: CornerColor): number {
+  return c === 'water' ? 5 : c === 'beach' ? 6 : 1
+}
+
 function cellHash(q: number, r: number, salt: number): number {
   let h = (q * 73856093) ^ (r * 19349663) ^ (salt * 83492791)
   h = (h ^ (h >>> 16)) * 0x85ebca6b
@@ -280,9 +333,12 @@ export function HexMap(props: HexMapProps) {
     >
       <svg className="w-full h-full block" style={{ imageRendering: 'pixelated' }}>
         <g transform={`translate(${tx} ${ty}) scale(${scale})`}>
-          {/* BASE LAYER — multi-tile fill per game cell. Ocean uses the
-              animated pattern; everything else paints a 4×4 grid of variant
-              tiles for proper terrain density. */}
+          {/* BASE LAYER — every game cell is a 4×4 grid of Pita tiles. For
+              each sub-tile, compute its 4 corner "colors" by looking at which
+              game cells touch each corner; pick the matching transition tile
+              from the autotile lookup. Sub-tiles whose corners are all the
+              same (no boundary nearby) fall back to the cell's biome pool
+              for variety. */}
           {hexes.map((h) => {
             const v = fog.vis.get(axialKey(h)) ?? 'unknown'
             const baseX = h.q * CELL_SIZE
@@ -300,43 +356,101 @@ export function HexMap(props: HexMapProps) {
               )
             }
             const opacity = v === 'scouted' ? 0.55 : 1
-            if (h.biome === 'ocean') {
-              return (
-                <rect
-                  key={`base-${axialKey(h)}`}
-                  x={baseX}
-                  y={baseY}
-                  width={CELL_SIZE}
-                  height={CELL_SIZE}
-                  fill="url(#tex-ocean)"
-                  opacity={opacity}
-                />
-              )
+
+            // Pull biome from a sibling cell (used to determine corner colors).
+            const biomeAt = (cx: number, cy: number): Biome | null => {
+              return hexesByKey.get(`${cx},${cy}`)?.biome ?? null
             }
-            const subs: { x: number; y: number; src: string }[] = []
+
+            // Determine the color of one of this sub-tile's 4 corners. The
+            // corner's "terrain" is the highest-priority biome among all game
+            // cells that touch it: ocean > coast > anything else.
+            const corner = (sx: number, sy: number, idx: 0 | 1 | 2 | 3): CornerColor => {
+              const dx = idx === 1 || idx === 3 ? 1 : 0
+              const dy = idx >= 2 ? 1 : 0
+              const sxAt = sx + dx
+              const syAt = sy + dy
+              const onLeft = sxAt === 0
+              const onRight = sxAt === SUB
+              const onTop = syAt === 0
+              const onBottom = syAt === SUB
+              const candidates: [number, number][] = [[h.q, h.r]]
+              if (onLeft) candidates.push([h.q - 1, h.r])
+              if (onRight) candidates.push([h.q + 1, h.r])
+              if (onTop) candidates.push([h.q, h.r - 1])
+              if (onBottom) candidates.push([h.q, h.r + 1])
+              if (onLeft && onTop) candidates.push([h.q - 1, h.r - 1])
+              if (onRight && onTop) candidates.push([h.q + 1, h.r - 1])
+              if (onLeft && onBottom) candidates.push([h.q - 1, h.r + 1])
+              if (onRight && onBottom) candidates.push([h.q + 1, h.r + 1])
+              let hasOcean = false
+              let hasCoast = false
+              for (const [cx, cy] of candidates) {
+                const b = biomeAt(cx, cy)
+                if (b === 'ocean') hasOcean = true
+                else if (b === 'coast') hasCoast = true
+              }
+              if (hasOcean) return 'water'
+              if (hasCoast) return 'beach'
+              return 'grass'
+            }
+
+            const subs: { x: number; y: number; src: string; animated?: boolean }[] = []
             for (let sy = 0; sy < SUB; sy++) {
               for (let sx = 0; sx < SUB; sx++) {
-                const variant = pickTileVariant(h.biome, h.q, h.r, sx, sy)
-                subs.push({
-                  x: baseX + sx * SUB_SIZE,
-                  y: baseY + sy * SUB_SIZE,
-                  src: tile(variant),
-                })
+                const tl = corner(sx, sy, 0)
+                const tr = corner(sx, sy, 1)
+                const bl = corner(sx, sy, 2)
+                const br = corner(sx, sy, 3)
+                const allWater = tl === 'water' && tr === 'water' && bl === 'water' && br === 'water'
+                if (allWater) {
+                  subs.push({ x: baseX + sx * SUB_SIZE, y: baseY + sy * SUB_SIZE, src: '', animated: true })
+                  continue
+                }
+                const allGrass = tl === 'grass' && tr === 'grass' && bl === 'grass' && br === 'grass'
+                if (allGrass) {
+                  // No boundary touches this sub-tile → fall back to the
+                  // cell's biome pool (so plains stays planes, hills stays
+                  // hills, etc., with proper variety).
+                  const variant = pickTileVariant(h.biome, h.q, h.r, sx, sy)
+                  subs.push({ x: baseX + sx * SUB_SIZE, y: baseY + sy * SUB_SIZE, src: tile(variant) })
+                  continue
+                }
+                const key = `${cornerTerrainCode(tl)},${cornerTerrainCode(tr)},${cornerTerrainCode(bl)},${cornerTerrainCode(br)}`
+                const at = AUTOTILE[key]
+                if (at) {
+                  subs.push({ x: baseX + sx * SUB_SIZE, y: baseY + sy * SUB_SIZE, src: tile(at) })
+                } else {
+                  // Unmatched combo — fall back to biome variant.
+                  const variant = pickTileVariant(h.biome, h.q, h.r, sx, sy)
+                  subs.push({ x: baseX + sx * SUB_SIZE, y: baseY + sy * SUB_SIZE, src: tile(variant) })
+                }
               }
             }
             return (
               <g key={`base-${axialKey(h)}`} opacity={opacity}>
-                {subs.map((s, i) => (
-                  <image
-                    key={i}
-                    x={s.x}
-                    y={s.y}
-                    width={SUB_SIZE}
-                    height={SUB_SIZE}
-                    href={s.src}
-                    preserveAspectRatio="none"
-                  />
-                ))}
+                {subs.map((s, i) =>
+                  s.animated ? (
+                    <rect
+                      key={i}
+                      x={s.x}
+                      y={s.y}
+                      width={SUB_SIZE}
+                      height={SUB_SIZE}
+                      fill="url(#tex-ocean)"
+                    />
+                  ) : (
+                    <image
+                      key={i}
+                      x={s.x}
+                      y={s.y}
+                      width={SUB_SIZE}
+                      height={SUB_SIZE}
+                      href={s.src}
+                      preserveAspectRatio="none"
+                    />
+                  ),
+                )}
               </g>
             )
           })}
