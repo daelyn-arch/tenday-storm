@@ -273,7 +273,18 @@ export function HexMap(props: HexMapProps) {
           {hexes.map((h) => {
             const p = hexToPixel({ q: h.q, r: h.r })
             const v = fog.vis.get(axialKey(h)) ?? 'unknown'
-            let fill = BIOME_COLOR[h.biome]
+            // Biomes with a tile texture render via SVG <pattern>; ocean and
+            // hills fall back to their flat biome color.
+            const TEXTURED: Record<string, true> = {
+              coast: true,
+              plains: true,
+              forest: true,
+              mountain: true,
+              desert: true,
+              swamp: true,
+              tundra: true,
+            }
+            let fill = TEXTURED[h.biome] ? `url(#tex-${h.biome})` : BIOME_COLOR[h.biome]
             let opacity = 1
             if (v === 'scouted') {
               opacity = 0.55
@@ -528,6 +539,28 @@ export function HexMap(props: HexMapProps) {
             <stop offset="0%" stopColor="#241945" />
             <stop offset="100%" stopColor="#241945" stopOpacity="0" />
           </radialGradient>
+          {/* Biome textures rendered as tiled SVG patterns. patternUnits in
+              userSpaceOnUse means the pattern tiles in the SVG's coordinate
+              system, so all hexes share a continuous tiled image rather than
+              each hex showing the same cropped tile. */}
+          {(['coast', 'plains', 'forest', 'mountain', 'desert', 'swamp', 'tundra'] as const).map(
+            (biome) => (
+              <pattern
+                key={biome}
+                id={`tex-${biome}`}
+                patternUnits="userSpaceOnUse"
+                width={64}
+                height={64}
+              >
+                <image
+                  href={`${import.meta.env.BASE_URL}textures/tiles/${biome}.jpg`}
+                  width={64}
+                  height={64}
+                  preserveAspectRatio="xMidYMid slice"
+                />
+              </pattern>
+            ),
+          )}
         </defs>
       </svg>
       {/* Selected-tile coord HUD, anchored bottom-right of the map area. */}

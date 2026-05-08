@@ -34,13 +34,28 @@ const BIOME_MAP: Record<string, string> = {
   ocean: 'ocean',
 }
 
+const BIOMES = new Set([
+  'ocean',
+  'coast',
+  'plains',
+  'forest',
+  'hills',
+  'mountain',
+  'desert',
+  'swamp',
+  'tundra',
+])
+
 function guessBiome(zipName: string): string {
   const lower = zipName.toLowerCase()
+  // If the zip is already named exactly after a biome (e.g., "coast.zip"),
+  // honor that — it's the user's explicit intent.
+  const stem = lower.replace(/\.blend\.zip$|\.zip$/g, '')
+  if (BIOMES.has(stem)) return stem
   for (const [keyword, biome] of Object.entries(BIOME_MAP)) {
     if (lower.includes(keyword)) return biome
   }
-  // Fallback: strip trailing _01_4k.blend.zip etc.
-  return lower.replace(/_(?:0\d|4k|\d+k)+|\.blend\.zip$|\.zip$/g, '').trim() || 'unknown'
+  return stem.replace(/_(?:0\d|4k|\d+k)+/g, '').trim() || 'unknown'
 }
 
 const entries = readdirSync(TILES_DIR).filter((f) => f.endsWith('.zip'))
