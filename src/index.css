@@ -10,12 +10,12 @@ html, body, #root {
 
 body {
   @apply text-ink-100 font-body antialiased;
-  /* Tavern-wall wood plank background, tiled. The dark overlay keeps text
-     readable when panels are translucent. */
-  background-color: #1a1208;
-  background-image: linear-gradient(rgba(20, 12, 6, 0.55), rgba(20, 12, 6, 0.55)),
+  /* Treasure-chest wood plank background, tiled. A light overlay tames
+     contrast so panels still read on top. */
+  background-color: #2a1810;
+  background-image: linear-gradient(rgba(15, 8, 4, 0.35), rgba(15, 8, 4, 0.35)),
     url('/textures/wood.jpg');
-  background-size: auto, 540px;
+  background-size: auto, 480px;
   background-repeat: repeat, repeat;
   margin: 0;
 }
@@ -47,21 +47,24 @@ body {
   .label-tiny {
     @apply text-xs uppercase tracking-wider text-ink-300 mb-1 block;
   }
-  /* "Framed posting" style: dark wood-toned card with an iron-bound border
-     pulled from the metal texture. Square corners feel like the iron corners
-     are real metal strips, not CSS. Thicker border + tighter slice so the
-     metal grain actually reads. */
+  /* Treasure-chest panel: warm wood card bound by a strap of ornate filigree.
+     Slice 90 from the 512px source picks up the densest filigree band; round
+     repeat tiles it cleanly along each edge. Larger border-width lets the
+     ornament read at typical card sizes. */
   .panel {
     @apply text-ink-100;
-    background-color: rgba(28, 20, 12, 0.92);
+    background-image: linear-gradient(rgba(20, 12, 6, 0.78), rgba(20, 12, 6, 0.78)),
+      url('/textures/wood.jpg');
+    background-size: cover, 380px;
+    background-blend-mode: normal;
     border-style: solid;
-    border-width: 10px;
+    border-width: 14px;
     border-image-source: url('/textures/metal.jpg');
-    border-image-slice: 120;
+    border-image-slice: 90;
     border-image-repeat: round;
     border-image-outset: 0;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6),
-      0 4px 12px rgba(0, 0, 0, 0.45);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.7),
+      0 4px 14px rgba(0, 0, 0, 0.55);
   }
   /* Tavern banner — a heavy iron strap, used along the top of the page
      header so the menu/title sits on what looks like a metal nameplate. */
