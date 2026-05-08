@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  TILE_SIZE,
   axialDistance,
   axialKey,
   cellCenter,
@@ -9,7 +8,7 @@ import {
   type Axial,
 } from './coords'
 import { BIOME_LABEL } from '../world/biomes'
-import type { HexRow, RegionRow } from '../types/db'
+import type { Biome, HexRow, RegionRow } from '../types/db'
 import { LocationIcon } from './LocationIcon'
 
 export interface MapHex
@@ -46,29 +45,60 @@ const PIN_COLORS: Record<PinKind, string> = {
   journal: '#5cc7ff',
 }
 
-// Tile asset paths — populated from public/textures/tiles/. The arrays are
-// the variety pool for each biome; one is picked deterministically per cell.
-const TILE_BASE = (name: string, base: string) => `${base}textures/tiles/${name}.png`
-const BIOME_VARIANTS: Record<string, string[]> = {
-  ocean: ['ocean_anim'], // sentinel — uses animated pattern below
+// Each game cell is now a 4×4 grid of Pita tiles, displayed at 2× source
+// scale (so each tile is 32px on screen, each cell 128px). This finally
+// lets the maps look like Pita's reference shots: real terrain density
+// instead of one stretched tile per cell.
+const CELL_SIZE = 128
+const SUB = 4
+const SUB_SIZE = CELL_SIZE / SUB // 32
+
+// Tile pools per biome. Order matters — first entry is the dominant tile,
+// rest are variants sprinkled in by the weighted picker.
+const BIOME_POOL: Record<Biome, string[]> = {
+  ocean: ['ocean_a0'], // sentinel — actually drawn via animated <pattern>
   coast: ['coast_0'],
   plains: ['plains_0', 'plains_1', 'plains_2', 'plains_3', 'plains_4'],
-  forest: ['plains_0', 'plains_1', 'plains_2'], // base ground; trees overlaid separately
+  forest: ['plains_0', 'plains_1', 'plains_2'], // grass base, trees overlaid
   hills: ['hills_0', 'hills_1', 'hills_2'],
   mountain: ['mountain_0', 'mountain_1', 'mountain_2'],
   desert: ['desert'],
   swamp: ['swamp'],
   tundra: ['tundra'],
 }
-const TREE_VARIANTS = ['tree_0', 'tree_1', 'tree_2', 'tree_3', 'tree_4']
 
-/** Cheap deterministic hash → uint32 derived from cell coords + a salt. */
+// Roughly how often each entry shows up. Front-loaded so most of a biome
+// reads as one consistent texture with the variants as visual interest.
+const BIOME_WEIGHTS: Partial<Record<Biome, number[]>> = {
+  plains: [0.6, 0.15, 0.13, 0.07, 0.05],
+  forest: [0.5, 0.3, 0.2],
+  hills: [0.6, 0.25, 0.15],
+  mountain: [0.55, 0.25, 0.2],
+}
+
+const TREE_VARIANTS = ['tree_0', 'tree_1', 'tree_2', 'tree_3', 'tree_4']
+const ROCK_VARIANTS = ['rock_0', 'rock_1']
+
 function cellHash(q: number, r: number, salt: number): number {
   let h = (q * 73856093) ^ (r * 19349663) ^ (salt * 83492791)
   h = (h ^ (h >>> 16)) * 0x85ebca6b
   h = (h ^ (h >>> 13)) * 0xc2b2ae35
   h = h ^ (h >>> 16)
   return h >>> 0
+}
+
+function pickTileVariant(biome: Biome, q: number, r: number, sx: number, sy: number): string {
+  const seed = cellHash(q, r, sx + sy * SUB + 1)
+  const pool = BIOME_POOL[biome] ?? ['plains_0']
+  if (pool.length === 1) return pool[0]
+  const weights = BIOME_WEIGHTS[biome] ?? new Array(pool.length).fill(1 / pool.length)
+  const r01 = (seed & 0xffff) / 0x10000
+  let acc = 0
+  for (let i = 0; i < pool.length; i++) {
+    acc += weights[i] ?? 0
+    if (r01 < acc) return pool[i]
+  }
+  return pool[pool.length - 1]
 }
 
 interface FogState {
@@ -112,10 +142,11 @@ export function HexMap(props: HexMapProps) {
     hexes.forEach((h) => m.set(axialKey(h), h))
     return m
   }, [hexes])
-  const bounds = useMemo(() => rectBounds(props.width, props.height), [props.width, props.height])
+  const bounds = useMemo(() => rectBounds(props.width, props.height, CELL_SIZE), [props.width, props.height])
   const base = import.meta.env.BASE_URL
+  const tile = (name: string) => `${base}textures/tiles/${name}.png`
 
-  // Pan/zoom state
+  // Pan/zoom
   const [tx, setTx] = useState(0)
   const [ty, setTy] = useState(0)
   const [scale, setScale] = useState(1)
@@ -135,33 +166,24 @@ export function HexMap(props: HexMapProps) {
     setTy((ch - bounds.h * s) / 2 - bounds.minY * s)
   }, [bounds.w, bounds.h, bounds.minX, bounds.minY])
 
-  // For each cell, pick a deterministic variant tile from its biome pool.
-  const tileSrc = (h: MapHex): string | null => {
-    if (h.biome === 'ocean') return null // rendered via animated pattern instead
-    const pool = BIOME_VARIANTS[h.biome] ?? [h.biome]
-    const idx = cellHash(h.q, h.r, 1) % pool.length
-    return TILE_BASE(pool[idx], base)
-  }
-
-  // Region outlines as axis-aligned segments between cells of different regions.
+  // Region outlines
   const regionEdges = useMemo(() => {
     const segs: { x1: number; y1: number; x2: number; y2: number; color: string }[] = []
-    const inset = 2
     for (const h of hexes) {
       if (!h.region_id) continue
       if (mode === 'player' && !fog.knownRegions.has(h.region_id)) continue
       const region = regionsById.get(h.region_id)
       if (!region) continue
       const color = region.color
-      const left = h.q * TILE_SIZE
-      const top = h.r * TILE_SIZE
-      const right = left + TILE_SIZE
-      const bottom = top + TILE_SIZE
+      const left = h.q * CELL_SIZE
+      const top = h.r * CELL_SIZE
+      const right = left + CELL_SIZE
+      const bottom = top + CELL_SIZE
       const sides: [Axial, [number, number, number, number]][] = [
-        [{ q: h.q + 1, r: h.r }, [right - inset, top + inset, right - inset, bottom - inset]],
-        [{ q: h.q - 1, r: h.r }, [left + inset, top + inset, left + inset, bottom - inset]],
-        [{ q: h.q, r: h.r + 1 }, [left + inset, bottom - inset, right - inset, bottom - inset]],
-        [{ q: h.q, r: h.r - 1 }, [left + inset, top + inset, right - inset, top + inset]],
+        [{ q: h.q + 1, r: h.r }, [right, top, right, bottom]],
+        [{ q: h.q - 1, r: h.r }, [left, top, left, bottom]],
+        [{ q: h.q, r: h.r + 1 }, [left, bottom, right, bottom]],
+        [{ q: h.q, r: h.r - 1 }, [left, top, right, top]],
       ]
       for (const [n, [x1, y1, x2, y2]] of sides) {
         const nh = hexesByKey.get(axialKey(n))
@@ -178,7 +200,7 @@ export function HexMap(props: HexMapProps) {
       if (!h.region_id) continue
       const region = regionsById.get(h.region_id)
       if (!region) continue
-      const c = cellCenter({ q: h.q, r: h.r })
+      const c = cellCenter({ q: h.q, r: h.r }, CELL_SIZE)
       const cur = acc.get(h.region_id) ?? { x: 0, y: 0, n: 0, name: region.name, color: region.color }
       cur.x += c.x
       cur.y += c.y
@@ -204,11 +226,11 @@ export function HexMap(props: HexMapProps) {
     return m
   }, [pins])
 
-  const stormCenter = cellCenter(stormHex)
-  const stormPixelRadius = TILE_SIZE * (stormRadius + 0.5)
-  const nextStormCenter = nextStormHex ? cellCenter(nextStormHex) : null
-  const partyCenter = cellCenter(partyHex)
-  const finalBossCenter = finalBoss ? cellCenter(finalBoss) : null
+  const stormCenter = cellCenter(stormHex, CELL_SIZE)
+  const stormPixelRadius = CELL_SIZE * (stormRadius + 0.5)
+  const nextStormCenter = nextStormHex ? cellCenter(nextStormHex, CELL_SIZE) : null
+  const partyCenter = cellCenter(partyHex, CELL_SIZE)
+  const finalBossCenter = finalBoss ? cellCenter(finalBoss, CELL_SIZE) : null
 
   const selectedHex = selected ? hexesByKey.get(`${selected.q},${selected.r}`) : null
   const hudLabel = selectedHex
@@ -218,7 +240,7 @@ export function HexMap(props: HexMapProps) {
   return (
     <div
       ref={containerRef}
-      className="relative w-full h-full overflow-hidden bg-ink-300 select-none"
+      className="relative w-full h-full overflow-hidden bg-[#1a3550] select-none"
       onMouseDown={(e) => {
         if (e.button !== 0) return
         const isBg = (e.target as Element).tagName === 'svg'
@@ -258,18 +280,21 @@ export function HexMap(props: HexMapProps) {
     >
       <svg className="w-full h-full block" style={{ imageRendering: 'pixelated' }}>
         <g transform={`translate(${tx} ${ty}) scale(${scale})`}>
-          {/* Base biome tiles */}
+          {/* BASE LAYER — multi-tile fill per game cell. Ocean uses the
+              animated pattern; everything else paints a 4×4 grid of variant
+              tiles for proper terrain density. */}
           {hexes.map((h) => {
             const v = fog.vis.get(axialKey(h)) ?? 'unknown'
-            const p = hexToPixel({ q: h.q, r: h.r })
+            const baseX = h.q * CELL_SIZE
+            const baseY = h.r * CELL_SIZE
             if (v === 'unknown') {
               return (
                 <rect
                   key={`base-${axialKey(h)}`}
-                  x={p.x}
-                  y={p.y}
-                  width={TILE_SIZE}
-                  height={TILE_SIZE}
+                  x={baseX}
+                  y={baseY}
+                  width={CELL_SIZE}
+                  height={CELL_SIZE}
                   fill="#0c0a07"
                 />
               )
@@ -279,122 +304,205 @@ export function HexMap(props: HexMapProps) {
               return (
                 <rect
                   key={`base-${axialKey(h)}`}
-                  x={p.x}
-                  y={p.y}
-                  width={TILE_SIZE}
-                  height={TILE_SIZE}
+                  x={baseX}
+                  y={baseY}
+                  width={CELL_SIZE}
+                  height={CELL_SIZE}
                   fill="url(#tex-ocean)"
                   opacity={opacity}
                 />
               )
             }
-            const src = tileSrc(h)
-            if (!src) return null
+            const subs: { x: number; y: number; src: string }[] = []
+            for (let sy = 0; sy < SUB; sy++) {
+              for (let sx = 0; sx < SUB; sx++) {
+                const variant = pickTileVariant(h.biome, h.q, h.r, sx, sy)
+                subs.push({
+                  x: baseX + sx * SUB_SIZE,
+                  y: baseY + sy * SUB_SIZE,
+                  src: tile(variant),
+                })
+              }
+            }
             return (
-              <image
-                key={`base-${axialKey(h)}`}
-                x={p.x}
-                y={p.y}
-                width={TILE_SIZE}
-                height={TILE_SIZE}
-                href={src}
-                opacity={opacity}
-                preserveAspectRatio="none"
-              />
+              <g key={`base-${axialKey(h)}`} opacity={opacity}>
+                {subs.map((s, i) => (
+                  <image
+                    key={i}
+                    x={s.x}
+                    y={s.y}
+                    width={SUB_SIZE}
+                    height={SUB_SIZE}
+                    href={s.src}
+                    preserveAspectRatio="none"
+                  />
+                ))}
+              </g>
             )
           })}
 
-          {/* Forest tree scatter — 2-3 trees per forest cell, deterministic */}
+          {/* FOREST DECORATION — scatter ~6 trees per forest cell. */}
           {hexes.map((h) => {
             if (h.biome !== 'forest') return null
             if (mode === 'player' && !h.revealed) return null
-            const cc = cellCenter({ q: h.q, r: h.r })
-            const trees = []
-            for (let i = 0; i < 3; i++) {
-              const seed = cellHash(h.q, h.r, i + 7)
-              const ang = ((seed & 0xff) / 255) * Math.PI * 2
-              const rad = (((seed >> 8) & 0xff) / 255) * (TILE_SIZE * 0.32)
-              const variant = TREE_VARIANTS[((seed >> 16) & 0xff) % TREE_VARIANTS.length]
-              const size = TILE_SIZE * 0.48
+            const baseX = h.q * CELL_SIZE
+            const baseY = h.r * CELL_SIZE
+            const trees: { x: number; y: number; size: number; src: string }[] = []
+            const count = 6
+            for (let i = 0; i < count; i++) {
+              const seed = cellHash(h.q, h.r, i + 100)
+              const u = (seed & 0xffff) / 0x10000
+              const v = ((seed >> 16) & 0xffff) / 0x10000
+              const variant = TREE_VARIANTS[((seed >> 4) & 0xff) % TREE_VARIANTS.length]
+              const sizeMul = 0.85 + (((seed >> 8) & 0xff) / 256) * 0.4
+              const size = SUB_SIZE * 1.5 * sizeMul
+              const padding = size / 2
               trees.push({
-                x: cc.x + Math.cos(ang) * rad - size / 2,
-                y: cc.y + Math.sin(ang) * rad - size / 2 - size * 0.15,
+                x: baseX + padding + u * (CELL_SIZE - 2 * padding) - size / 2,
+                y: baseY + padding + v * (CELL_SIZE - 2 * padding) - size / 2,
                 size,
-                src: TILE_BASE(variant, base),
+                src: tile(variant),
               })
             }
-            // Sort by Y so back trees draw before front (depth illusion)
             trees.sort((a, b) => a.y - b.y)
             return (
               <g key={`forest-${axialKey(h)}`} pointerEvents="none">
                 {trees.map((t, i) => (
-                  <image key={i} x={t.x} y={t.y} width={t.size} height={t.size} href={t.src} preserveAspectRatio="none" />
+                  <image
+                    key={i}
+                    x={t.x}
+                    y={t.y}
+                    width={t.size}
+                    height={t.size}
+                    href={t.src}
+                    preserveAspectRatio="none"
+                  />
                 ))}
               </g>
             )
           })}
 
-          {/* Mountain rock decoration */}
+          {/* MOUNTAIN ROCKS — extra clusters scattered on mountain cells. */}
           {hexes.map((h) => {
             if (h.biome !== 'mountain') return null
             if (mode === 'player' && !h.revealed) return null
-            const cc = cellCenter({ q: h.q, r: h.r })
-            const rocks = []
-            for (let i = 0; i < 2; i++) {
-              const seed = cellHash(h.q, h.r, i + 11)
-              const ang = ((seed & 0xff) / 255) * Math.PI * 2
-              const rad = (((seed >> 8) & 0xff) / 255) * (TILE_SIZE * 0.25)
-              const size = TILE_SIZE * 0.42
+            const baseX = h.q * CELL_SIZE
+            const baseY = h.r * CELL_SIZE
+            const rocks: { x: number; y: number; size: number; src: string }[] = []
+            const count = 3
+            for (let i = 0; i < count; i++) {
+              const seed = cellHash(h.q, h.r, i + 200)
+              const u = (seed & 0xffff) / 0x10000
+              const v = ((seed >> 16) & 0xffff) / 0x10000
+              const variant = ROCK_VARIANTS[((seed >> 4) & 0xff) % ROCK_VARIANTS.length]
+              const size = SUB_SIZE * (0.9 + (((seed >> 8) & 0xff) / 256) * 0.3)
+              const padding = size / 2
               rocks.push({
-                x: cc.x + Math.cos(ang) * rad - size / 2,
-                y: cc.y + Math.sin(ang) * rad - size / 2,
+                x: baseX + padding + u * (CELL_SIZE - 2 * padding) - size / 2,
+                y: baseY + padding + v * (CELL_SIZE - 2 * padding) - size / 2,
                 size,
-                src: TILE_BASE(i === 0 ? 'rock_0' : 'rock_1', base),
+                src: tile(variant),
               })
             }
+            rocks.sort((a, b) => a.y - b.y)
             return (
               <g key={`rock-${axialKey(h)}`} pointerEvents="none">
                 {rocks.map((r, i) => (
-                  <image key={i} x={r.x} y={r.y} width={r.size} height={r.size} href={r.src} preserveAspectRatio="none" />
+                  <image
+                    key={i}
+                    x={r.x}
+                    y={r.y}
+                    width={r.size}
+                    height={r.size}
+                    href={r.src}
+                    preserveAspectRatio="none"
+                  />
                 ))}
               </g>
             )
           })}
 
-          {/* Region outlines (after biome but before pins/UI) */}
+          {/* SETTLEMENT HOUSES — quick decorator for cells with location_type
+              that should read as inhabited (village / city / fortress). */}
+          {hexes.map((h) => {
+            if (mode === 'player' && !h.revealed) return null
+            const isInhabited =
+              h.location_type === 'village' ||
+              h.location_type === 'city' ||
+              h.location_type === 'fortress'
+            if (!isInhabited) return null
+            const baseX = h.q * CELL_SIZE
+            const baseY = h.r * CELL_SIZE
+            const count = h.location_type === 'village' ? 3 : 5
+            const houses: { x: number; y: number; size: number; src: string }[] = []
+            const HOUSE_VARIANTS = ['house_0', 'house_1', 'house_2']
+            for (let i = 0; i < count; i++) {
+              const seed = cellHash(h.q, h.r, i + 300)
+              const u = (seed & 0xffff) / 0x10000
+              const v = ((seed >> 16) & 0xffff) / 0x10000
+              const src = HOUSE_VARIANTS[((seed >> 4) & 0xff) % HOUSE_VARIANTS.length]
+              const size = SUB_SIZE * (h.location_type === 'fortress' ? 1.3 : 1.1)
+              const padding = size / 2 + SUB_SIZE * 0.3
+              houses.push({
+                x: baseX + padding + u * (CELL_SIZE - 2 * padding) - size / 2,
+                y: baseY + padding + v * (CELL_SIZE - 2 * padding) - size / 2,
+                size,
+                src: tile(src),
+              })
+            }
+            houses.sort((a, b) => a.y - b.y)
+            return (
+              <g key={`build-${axialKey(h)}`} pointerEvents="none">
+                {houses.map((b, i) => (
+                  <image
+                    key={i}
+                    x={b.x}
+                    y={b.y}
+                    width={b.size}
+                    height={b.size}
+                    href={b.src}
+                    preserveAspectRatio="none"
+                  />
+                ))}
+              </g>
+            )
+          })}
+
+          {/* Region outlines — drawn once each (unlike the per-cell-side
+              version which double-draws shared edges). */}
           {regionEdges.map((s, i) => (
-            <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={s.color} strokeWidth={2.5} strokeLinecap="square" opacity={0.85} />
+            <line key={i} x1={s.x1} y1={s.y1} x2={s.x2} y2={s.y2} stroke={s.color} strokeWidth={3} strokeLinecap="square" opacity={0.85} />
           ))}
 
-          {/* Selection indicator */}
+          {/* Selection ring */}
           {selected && (() => {
-            const p = hexToPixel(selected)
-            const inset = TILE_SIZE * 0.08
+            const p = hexToPixel(selected, CELL_SIZE)
+            const inset = 4
             return (
               <rect
                 x={p.x + inset}
                 y={p.y + inset}
-                width={TILE_SIZE - inset * 2}
-                height={TILE_SIZE - inset * 2}
+                width={CELL_SIZE - inset * 2}
+                height={CELL_SIZE - inset * 2}
                 fill="none"
                 stroke="#fff"
-                strokeWidth={2.5}
+                strokeWidth={3}
                 pointerEvents="none"
               />
             )
           })()}
 
-          {/* Click capture — square per cell, on top so events register reliably */}
+          {/* Hit targets */}
           {hexes.map((h) => {
-            const p = hexToPixel({ q: h.q, r: h.r })
+            const p = hexToPixel({ q: h.q, r: h.r }, CELL_SIZE)
             const isSelected = selected && selected.q === h.q && selected.r === h.r
             return (
               <rect
                 key={`hit-${axialKey(h)}`}
                 x={p.x}
                 y={p.y}
-                width={TILE_SIZE}
-                height={TILE_SIZE}
+                width={CELL_SIZE}
+                height={CELL_SIZE}
                 fill="transparent"
                 style={{ cursor: 'pointer' }}
                 onClick={(e) => {
@@ -406,22 +514,23 @@ export function HexMap(props: HexMapProps) {
             )
           })}
 
-          {/* Location glyph — drawn on top of base tile, scaled to cell */}
+          {/* Location glyph (for non-settlement types like ruin/cave/temple) */}
           {hexes.map((h) => {
             if (!h.location_type) return null
             if (mode === 'player' && !h.revealed) return null
-            const cc = cellCenter({ q: h.q, r: h.r })
+            // Skip for inhabited types since we render real houses
+            if (h.location_type === 'village' || h.location_type === 'city' || h.location_type === 'fortress') return null
+            const cc = cellCenter({ q: h.q, r: h.r }, CELL_SIZE)
             return <LocationIcon key={`loc-${axialKey(h)}`} type={h.location_type} cx={cc.x} cy={cc.y} />
           })}
 
-          {/* Rivers — same edge approach as before */}
+          {/* Rivers */}
           {hexes.map((h) => {
             const edges = (h.generated?.rivers ?? []) as number[]
             if (edges.length === 0) return null
             if (mode === 'player' && !h.revealed) return null
-            const cc = cellCenter({ q: h.q, r: h.r })
-            const half = TILE_SIZE / 2
-            // Edge midpoints (matching NEIGHBORS order: E, S, W, N)
+            const cc = cellCenter({ q: h.q, r: h.r }, CELL_SIZE)
+            const half = CELL_SIZE / 2
             const edgeMid = (e: number) => {
               switch (e) {
                 case 0: return { x: cc.x + half, y: cc.y }
@@ -432,7 +541,7 @@ export function HexMap(props: HexMapProps) {
               }
             }
             const stroke = '#3a7bc8'
-            const strokeW = 4
+            const strokeW = 6
             if (edges.length === 2) {
               const a = edgeMid(edges[0])
               const b = edgeMid(edges[1])
@@ -468,8 +577,8 @@ export function HexMap(props: HexMapProps) {
                 height={stormPixelRadius * 2}
                 fill="none"
                 stroke="#6b4e9a"
-                strokeWidth={2.5}
-                strokeDasharray="6 6"
+                strokeWidth={3}
+                strokeDasharray="8 8"
                 opacity={0.7}
               />
               <text
@@ -477,19 +586,19 @@ export function HexMap(props: HexMapProps) {
                 y={nextStormCenter.y}
                 textAnchor="middle"
                 dominantBaseline="middle"
-                fontSize={Math.max(14, TILE_SIZE * 0.4)}
+                fontSize={Math.max(20, CELL_SIZE * 0.32)}
                 fontWeight="bold"
                 fill="#c9b3e6"
                 fontFamily="Cinzel, serif"
                 letterSpacing="0.15em"
-                style={{ paintOrder: 'stroke', stroke: '#000c', strokeWidth: 4, strokeLinejoin: 'round' }}
+                style={{ paintOrder: 'stroke', stroke: '#000c', strokeWidth: 5, strokeLinejoin: 'round' }}
               >
                 NEXT
               </text>
             </g>
           )}
 
-          {/* Live storm overlay — flat purple square */}
+          {/* Live storm overlay */}
           <rect
             x={stormCenter.x - stormPixelRadius}
             y={stormCenter.y - stormPixelRadius}
@@ -506,18 +615,18 @@ export function HexMap(props: HexMapProps) {
             height={stormPixelRadius * 2}
             fill="none"
             stroke="#6b4e9a"
-            strokeWidth={3}
+            strokeWidth={4}
             pointerEvents="none"
           />
 
           {/* Pins */}
           {Array.from(pinsByHex.entries()).map(([key, kinds]) => {
             const [qStr, rStr] = key.split(',')
-            const cc = cellCenter({ q: parseInt(qStr, 10), r: parseInt(rStr, 10) })
+            const cc = cellCenter({ q: parseInt(qStr, 10), r: parseInt(rStr, 10) }, CELL_SIZE)
             const total = kinds.length
-            const spacing = 12
+            const spacing = 16
             const startX = cc.x - ((total - 1) * spacing) / 2
-            const baseY = cc.y - TILE_SIZE * 0.35
+            const baseY = cc.y - CELL_SIZE * 0.42
             return (
               <g key={`pin-${key}`} pointerEvents="none">
                 {kinds.map((k, i) => {
@@ -525,8 +634,8 @@ export function HexMap(props: HexMapProps) {
                   const color = PIN_COLORS[k]
                   return (
                     <g key={`${key}-${i}`}>
-                      <circle cx={cx} cy={baseY} r={6} fill={color} stroke="#000" strokeWidth={1} />
-                      <polygon points={`${cx - 4},${baseY + 5} ${cx + 4},${baseY + 5} ${cx},${baseY + 13}`} fill={color} stroke="#000" strokeWidth={0.5} />
+                      <circle cx={cx} cy={baseY} r={8} fill={color} stroke="#000" strokeWidth={1.5} />
+                      <polygon points={`${cx - 5},${baseY + 6} ${cx + 5},${baseY + 6} ${cx},${baseY + 16}`} fill={color} stroke="#000" strokeWidth={0.8} />
                     </g>
                   )
                 })}
@@ -534,59 +643,58 @@ export function HexMap(props: HexMapProps) {
             )
           })}
 
-          {/* Final boss marker (DM only) */}
+          {/* Final boss */}
           {finalBossCenter && mode === 'dm' && (
             <g pointerEvents="none">
-              <circle cx={finalBossCenter.x} cy={finalBossCenter.y} r={TILE_SIZE * 0.32} fill="#220011" stroke="#ff3355" strokeWidth={2} />
-              <text x={finalBossCenter.x} y={finalBossCenter.y + 5} textAnchor="middle" fontSize={16} fill="#ff8899" fontWeight="bold">
+              <circle cx={finalBossCenter.x} cy={finalBossCenter.y} r={CELL_SIZE * 0.22} fill="#220011" stroke="#ff3355" strokeWidth={3} />
+              <text x={finalBossCenter.x} y={finalBossCenter.y + 8} textAnchor="middle" fontSize={26} fill="#ff8899" fontWeight="bold">
                 ☠
               </text>
             </g>
           )}
 
-          {/* Party token */}
+          {/* Party */}
           <g pointerEvents="none">
-            <circle cx={partyCenter.x} cy={partyCenter.y} r={TILE_SIZE * 0.32} fill="#fff7d6" stroke="#000" strokeWidth={1.8} />
-            <text x={partyCenter.x} y={partyCenter.y + 6} textAnchor="middle" fontSize={20} fontWeight="bold" fill="#1a1407">
+            <circle cx={partyCenter.x} cy={partyCenter.y} r={CELL_SIZE * 0.22} fill="#fff7d6" stroke="#000" strokeWidth={2.5} />
+            <text x={partyCenter.x} y={partyCenter.y + 9} textAnchor="middle" fontSize={28} fontWeight="bold" fill="#1a1407">
               ★
             </text>
           </g>
 
-          {/* Region labels at centroids */}
+          {/* Region labels */}
           {regionLabels.map((rl, i) => (
             <text
               key={`rl-${i}`}
               x={rl.x}
               y={rl.y}
               textAnchor="middle"
-              fontSize={Math.max(14, TILE_SIZE * 0.42)}
+              fontSize={Math.max(20, CELL_SIZE * 0.34)}
               fill={rl.color}
               fontFamily="Cinzel, serif"
-              opacity={0.9}
+              opacity={0.92}
               pointerEvents="none"
-              style={{ paintOrder: 'stroke', stroke: '#000a', strokeWidth: 4, strokeLinejoin: 'round' }}
+              style={{ paintOrder: 'stroke', stroke: '#000a', strokeWidth: 5, strokeLinejoin: 'round' }}
             >
               {rl.name}
             </text>
           ))}
         </g>
         <defs>
-          {/* Animated ocean — single pattern reused by every ocean cell. */}
-          <pattern id="tex-ocean" patternUnits="userSpaceOnUse" width={TILE_SIZE} height={TILE_SIZE}>
+          <pattern id="tex-ocean" patternUnits="userSpaceOnUse" width={SUB_SIZE} height={SUB_SIZE}>
             <image
-              width={TILE_SIZE}
-              height={TILE_SIZE}
+              width={SUB_SIZE}
+              height={SUB_SIZE}
               preserveAspectRatio="none"
-              href={`${base}textures/tiles/ocean_a0.png`}
+              href={tile('ocean_a0')}
             >
               <animate
                 attributeName="href"
                 values={[
-                  `${base}textures/tiles/ocean_a0.png`,
-                  `${base}textures/tiles/ocean_a1.png`,
-                  `${base}textures/tiles/ocean_a2.png`,
-                  `${base}textures/tiles/ocean_a3.png`,
-                  `${base}textures/tiles/ocean_a2.png`,
+                  tile('ocean_a0'),
+                  tile('ocean_a1'),
+                  tile('ocean_a2'),
+                  tile('ocean_a3'),
+                  tile('ocean_a2'),
                 ].join(';')}
                 dur="1.2s"
                 repeatCount="indefinite"
