@@ -93,7 +93,7 @@ export function DmView() {
 
   return (
     <div className="h-screen flex flex-col">
-      <header className="px-4 py-2 border-b border-ink-700 flex items-center justify-between gap-3">
+      <header className="iron-banner px-4 py-2 flex items-center justify-between gap-3">
         <div className="flex items-baseline gap-3 min-w-0">
           <h1 className="font-display text-xl truncate">{campaign.name}</h1>
           <span className="text-ink-300 text-xs">

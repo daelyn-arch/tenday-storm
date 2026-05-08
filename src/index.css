@@ -9,7 +9,14 @@ html, body, #root {
 }
 
 body {
-  @apply bg-ink-800 text-ink-100 font-body antialiased;
+  @apply text-ink-100 font-body antialiased;
+  /* Tavern-wall wood plank background, tiled. The dark overlay keeps text
+     readable when panels are translucent. */
+  background-color: #1a1208;
+  background-image: linear-gradient(rgba(20, 12, 6, 0.55), rgba(20, 12, 6, 0.55)),
+    url('/textures/wood.jpg');
+  background-size: auto, 540px;
+  background-repeat: repeat, repeat;
   margin: 0;
 }
 
@@ -40,7 +47,31 @@ body {
   .label-tiny {
     @apply text-xs uppercase tracking-wider text-ink-300 mb-1 block;
   }
+  /* "Framed posting" style: dark wood-toned card with an iron-bound border
+     pulled from the metal texture. Square corners feel like the iron corners
+     are real metal strips, not CSS. Thicker border + tighter slice so the
+     metal grain actually reads. */
   .panel {
-    @apply bg-ink-700/60 border border-ink-400/20 rounded-lg;
+    @apply text-ink-100;
+    background-color: rgba(28, 20, 12, 0.92);
+    border-style: solid;
+    border-width: 10px;
+    border-image-source: url('/textures/metal.jpg');
+    border-image-slice: 120;
+    border-image-repeat: round;
+    border-image-outset: 0;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6),
+      0 4px 12px rgba(0, 0, 0, 0.45);
+  }
+  /* Tavern banner — a heavy iron strap, used along the top of the page
+     header so the menu/title sits on what looks like a metal nameplate. */
+  .iron-banner {
+    background-image: linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.55)),
+      url('/textures/metal.jpg');
+    background-size: cover, 800px;
+    background-position: center;
+    border-top: 2px solid #2a1f12;
+    border-bottom: 2px solid #2a1f12;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
   }
 }
