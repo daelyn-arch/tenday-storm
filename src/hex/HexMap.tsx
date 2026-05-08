@@ -273,12 +273,13 @@ export function HexMap(props: HexMapProps) {
           {hexes.map((h) => {
             const p = hexToPixel({ q: h.q, r: h.r })
             const v = fog.vis.get(axialKey(h)) ?? 'unknown'
-            // Biomes with a tile texture render via SVG <pattern>; ocean and
-            // hills fall back to their flat biome color.
+            // Every biome now has a tile texture rendered via SVG <pattern>.
             const TEXTURED: Record<string, true> = {
+              ocean: true,
               coast: true,
               plains: true,
               forest: true,
+              hills: true,
               mountain: true,
               desert: true,
               swamp: true,
@@ -543,7 +544,7 @@ export function HexMap(props: HexMapProps) {
               userSpaceOnUse means the pattern tiles in the SVG's coordinate
               system, so all hexes share a continuous tiled image rather than
               each hex showing the same cropped tile. */}
-          {(['coast', 'plains', 'forest', 'mountain', 'desert', 'swamp', 'tundra'] as const).map(
+          {(['ocean', 'coast', 'plains', 'forest', 'hills', 'mountain', 'desert', 'swamp', 'tundra'] as const).map(
             (biome) => (
               <pattern
                 key={biome}
