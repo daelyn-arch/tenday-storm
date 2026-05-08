@@ -318,6 +318,37 @@ export function HexMap(props: HexMapProps) {
             <path key={i} d={s.d} stroke={s.color} strokeWidth={2.5} strokeLinecap="round" fill="none" opacity={0.85} />
           ))}
 
+          {/* Forest decoration: scatter 2-3 small tree sprites per forest
+              hex so the canopy reads as a real woodland rather than a flat
+              green tile. Positions seeded off (q, r) so they don't shift
+              between renders. */}
+          {hexes.map((h) => {
+            if (h.biome !== 'forest') return null
+            if (mode === 'player' && !h.revealed) return null
+            const center = hexToPixel({ q: h.q, r: h.r })
+            // Cheap deterministic hash → 3 scatter offsets per hex.
+            const seed = (h.q * 73856093) ^ (h.r * 19349663)
+            const trees: { x: number; y: number; size: number }[] = []
+            for (let i = 0; i < 3; i++) {
+              const s = seed * (i + 1) * 2654435761
+              const ang = ((s & 0xff) / 255) * Math.PI * 2
+              const rad = (((s >> 8) & 0xff) / 255) * HEX_SIZE * 0.55
+              const size = 16 + (((s >> 16) & 0xff) / 255) * 8
+              trees.push({
+                x: center.x + Math.cos(ang) * rad - size / 2,
+                y: center.y + Math.sin(ang) * rad - size / 2,
+                size,
+              })
+            }
+            return (
+              <g key={`forest-${axialKey(h)}`} pointerEvents="none">
+                {trees.map((t, i) => (
+                  <use key={i} href="#decor-tree" x={t.x} y={t.y} width={t.size} height={t.size} />
+                ))}
+              </g>
+            )
+          })}
+
           {/* Rivers — smooth blue curves through hexes that have river edges
               defined in their generated payload. Hidden on unrevealed hexes
               for players (rivers are geographical, but consistent with fog). */}
@@ -544,7 +575,7 @@ export function HexMap(props: HexMapProps) {
               userSpaceOnUse means the pattern tiles in the SVG's coordinate
               system, so all hexes share a continuous tiled image rather than
               each hex showing the same cropped tile. */}
-          {(['ocean', 'coast', 'plains', 'forest', 'hills', 'mountain', 'desert', 'swamp', 'tundra'] as const).map(
+          {(['coast', 'plains', 'forest', 'hills', 'mountain', 'desert', 'swamp', 'tundra'] as const).map(
             (biome) => (
               <pattern
                 key={biome}
@@ -563,6 +594,40 @@ export function HexMap(props: HexMapProps) {
               </pattern>
             ),
           )}
+          {/* Ocean animates between four wave frames at ~240ms each. SVG
+              <animate> on the href cycles them declaratively — no React
+              state thrash, no rAF needed. */}
+          <pattern id="tex-ocean" patternUnits="userSpaceOnUse" width={56} height={56}>
+            <image
+              width={56}
+              height={56}
+              preserveAspectRatio="xMidYMid slice"
+              style={{ imageRendering: 'pixelated' }}
+              href={`${import.meta.env.BASE_URL}textures/tiles/ocean_0.png`}
+            >
+              <animate
+                attributeName="href"
+                values={[
+                  `${import.meta.env.BASE_URL}textures/tiles/ocean_0.png`,
+                  `${import.meta.env.BASE_URL}textures/tiles/ocean_1.png`,
+                  `${import.meta.env.BASE_URL}textures/tiles/ocean_2.png`,
+                  `${import.meta.env.BASE_URL}textures/tiles/ocean_3.png`,
+                  `${import.meta.env.BASE_URL}textures/tiles/ocean_2.png`,
+                ].join(';')}
+                dur="1.2s"
+                repeatCount="indefinite"
+              />
+            </image>
+          </pattern>
+          {/* Tree sprite for scattering on forest hexes. */}
+          <symbol id="decor-tree" viewBox="0 0 64 64">
+            <image
+              href={`${import.meta.env.BASE_URL}textures/tiles/decor_tree.png`}
+              width={64}
+              height={64}
+              style={{ imageRendering: 'pixelated' }}
+            />
+          </symbol>
         </defs>
       </svg>
       {/* Selected-tile coord HUD, anchored bottom-right of the map area. */}
