@@ -550,14 +550,15 @@ export function HexMap(props: HexMapProps) {
                 key={biome}
                 id={`tex-${biome}`}
                 patternUnits="userSpaceOnUse"
-                width={64}
-                height={64}
+                width={56}
+                height={56}
               >
                 <image
-                  href={`${import.meta.env.BASE_URL}textures/tiles/${biome}.jpg`}
-                  width={64}
-                  height={64}
+                  href={`${import.meta.env.BASE_URL}textures/tiles/${biome}.png`}
+                  width={56}
+                  height={56}
                   preserveAspectRatio="xMidYMid slice"
+                  style={{ imageRendering: 'pixelated' }}
                 />
               </pattern>
             ),
