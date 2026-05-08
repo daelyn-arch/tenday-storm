@@ -47,24 +47,34 @@ body {
   .label-tiny {
     @apply text-xs uppercase tracking-wider text-ink-300 mb-1 block;
   }
-  /* Treasure-chest panel: warm wood card bound by a strap of ornate filigree.
-     Slice 90 from the 512px source picks up the densest filigree band; round
-     repeat tiles it cleanly along each edge. Larger border-width lets the
-     ornament read at typical card sizes. */
+  /* Each panel is a mini treasure-chest face. The full chest-frame.jpg is
+     used as a 9-slice border-image with fill, so iron corner brackets sit at
+     the 4 corners, the vertical straps with medallions stretch through the
+     center, and the wood between straps fills the panel body. A dark overlay
+     pseudo-element on top dims the center area enough for text legibility
+     while leaving the iron pristine. */
   .panel {
     @apply text-ink-100;
-    background-image: linear-gradient(rgba(20, 12, 6, 0.78), rgba(20, 12, 6, 0.78)),
-      url('/textures/wood.jpg');
-    background-size: cover, 380px;
-    background-blend-mode: normal;
+    position: relative;
+    background-color: transparent;
     border-style: solid;
-    border-width: 14px;
-    border-image-source: url('/textures/metal.jpg');
-    border-image-slice: 90;
-    border-image-repeat: round;
-    border-image-outset: 0;
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.7),
-      0 4px 14px rgba(0, 0, 0, 0.55);
+    border-width: 28px;
+    border-image-source: url('/textures/chest-frame.jpg');
+    border-image-slice: 120 fill;
+    border-image-repeat: stretch;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  }
+  .panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(20, 10, 4, 0.55);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .panel > * {
+    position: relative;
+    z-index: 1;
   }
   /* Tavern banner — a heavy iron strap, used along the top of the page
      header so the menu/title sits on what looks like a metal nameplate. */
