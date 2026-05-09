@@ -10,11 +10,11 @@ interface Props {
 const TILE = 16
 
 /**
- * Continuous Pita-style overworld renderer. The base layer is pre-baked into
- * an offscreen canvas at world-gen time and shown as a single <img> — that
- * way 30k tiles render in one paint instead of 30k SVG elements. Water tiles
- * are rendered separately via an SVG <pattern> with <animate> on the href so
- * waves animate without re-baking the canvas.
+ * Continuous Pita-style overworld renderer. Bakes the entire tilemap to a
+ * single canvas image at world-gen time and shows it as one SVG <image>.
+ * Water depth is rendered into the bake (no animation right now — the
+ * single repeating animated frame was creating a visible grid that was
+ * worse than no animation. Will revisit with multi-cell foam sprites later).
  */
 export function BeautifulMap({ seed, width, height }: Props) {
   const map = useMemo(() => generateMap(seed, width, height), [seed, width, height])
@@ -24,9 +24,8 @@ export function BeautifulMap({ seed, width, height }: Props) {
   const [ty, setTy] = useState(0)
   const [scale, setScale] = useState(1)
   const dragging = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
-
-  // Bake the base + decor + structures to a single canvas → data URL.
   const [bakedSrc, setBakedSrc] = useState<string | null>(null)
+
   useEffect(() => {
     let cancelled = false
     bake(map).then((src) => {
@@ -37,7 +36,6 @@ export function BeautifulMap({ seed, width, height }: Props) {
     }
   }, [map])
 
-  // Fit on first render
   useEffect(() => {
     const c = containerRef.current
     if (!c) return
@@ -52,20 +50,6 @@ export function BeautifulMap({ seed, width, height }: Props) {
     setTx((cw - mapW * s) / 2)
     setTy((ch - mapH * s) / 2)
   }, [map.width, map.height])
-
-  // Animated water rectangles — only emit one <rect> per animated tile
-  // (water cells never get baked, so they're transparent on the canvas).
-  const waterRects = useMemo(() => {
-    const rects: { x: number; y: number }[] = []
-    for (let y = 0; y < map.height; y++) {
-      for (let x = 0; x < map.width; x++) {
-        if (map.animated[y * map.width + x]) {
-          rects.push({ x: x * TILE, y: y * TILE })
-        }
-      }
-    }
-    return rects
-  }, [map])
 
   return (
     <div
@@ -100,12 +84,8 @@ export function BeautifulMap({ seed, width, height }: Props) {
         setScale(newScale)
       }}
     >
-      <svg
-        className="w-full h-full block"
-        style={{ imageRendering: 'pixelated' }}
-      >
+      <svg className="w-full h-full block" style={{ imageRendering: 'pixelated' }}>
         <g transform={`translate(${tx} ${ty}) scale(${scale})`}>
-          {/* Base layer — entire map baked to one image */}
           {bakedSrc && (
             <image
               href={bakedSrc}
@@ -116,60 +96,20 @@ export function BeautifulMap({ seed, width, height }: Props) {
               preserveAspectRatio="none"
             />
           )}
-          {/* Animated water cells — one rect each, all share one pattern */}
-          {waterRects.map((r, i) => (
-            <rect
-              key={i}
-              x={r.x}
-              y={r.y}
-              width={TILE}
-              height={TILE}
-              fill="url(#beautiful-ocean)"
-            />
-          ))}
         </g>
-        <defs>
-          <pattern id="beautiful-ocean" patternUnits="userSpaceOnUse" width={TILE} height={TILE}>
-            <image
-              width={TILE}
-              height={TILE}
-              preserveAspectRatio="none"
-              href={`${import.meta.env.BASE_URL}textures/tiles/ocean_a0.png`}
-            >
-              <animate
-                attributeName="href"
-                values={[
-                  `${import.meta.env.BASE_URL}textures/tiles/ocean_a0.png`,
-                  `${import.meta.env.BASE_URL}textures/tiles/ocean_a1.png`,
-                  `${import.meta.env.BASE_URL}textures/tiles/ocean_a2.png`,
-                  `${import.meta.env.BASE_URL}textures/tiles/ocean_a3.png`,
-                  `${import.meta.env.BASE_URL}textures/tiles/ocean_a2.png`,
-                ].join(';')}
-                dur="1.2s"
-                repeatCount="indefinite"
-              />
-            </image>
-          </pattern>
-        </defs>
       </svg>
     </div>
   )
 }
 
-/**
- * Bake the static layers of the generated map to an OffscreenCanvas, return
- * a data URL. This is the heavy lift but it only runs once per map.
- */
 async function bake(map: GeneratedMap): Promise<string> {
-  const TILE = 16
   const W = map.width * TILE
   const H = map.height * TILE
-  // Collect every unique sprite filename we'll need
   const names = new Set<string>()
   for (const n of map.tileNames) if (n) names.add(n)
+  for (const n of map.forestTiles) if (n) names.add(n)
   for (const d of map.decor) names.add(d.sprite)
   for (const s of map.structures) names.add(s.sprite)
-  // Load them all in parallel
   const base = (import.meta as ImportMeta).env.BASE_URL
   const images = await Promise.all(
     Array.from(names).map(
@@ -184,7 +124,6 @@ async function bake(map: GeneratedMap): Promise<string> {
   )
   const imgMap = new Map(images)
 
-  // Use a regular canvas (OffscreenCanvas not universally supported)
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H
@@ -192,11 +131,10 @@ async function bake(map: GeneratedMap): Promise<string> {
   if (!ctx) throw new Error('canvas context unavailable')
   ctx.imageSmoothingEnabled = false
 
-  // Base tiles
+  // Pass 1 — base terrain
   for (let y = 0; y < map.height; y++) {
     for (let x = 0; x < map.width; x++) {
       const i = y * map.width + x
-      if (map.animated[i]) continue // animated water — leave transparent for SVG layer
       const name = map.tileNames[i]
       if (!name) continue
       const img = imgMap.get(name)
@@ -204,17 +142,34 @@ async function bake(map: GeneratedMap): Promise<string> {
       ctx.drawImage(img, x * TILE, y * TILE, TILE, TILE)
     }
   }
-  // Decor (trees, rocks)
+
+  // Pass 2 — forest cluster overlay (paints dense tree sprites on top of
+  // grass for any cell flagged as forest).
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      const i = y * map.width + x
+      if (!map.forest[i]) continue
+      const name = map.forestTiles[i]
+      if (!name) continue
+      const img = imgMap.get(name)
+      if (!img) continue
+      ctx.drawImage(img, x * TILE, y * TILE, TILE, TILE)
+    }
+  }
+
+  // Pass 3 — loose decor (rocks, etc.) — currently empty
   for (const d of map.decor) {
     const img = imgMap.get(d.sprite)
     if (!img) continue
     ctx.drawImage(img, d.x - d.size / 2, d.y - d.size / 2, d.size, d.size)
   }
-  // Structures (houses for now; multi-tile sprites later)
+
+  // Pass 4 — structures (placeholder houses)
   for (const s of map.structures) {
     const img = imgMap.get(s.sprite)
     if (!img) continue
     ctx.drawImage(img, s.x, s.y, s.w, s.h)
   }
+
   return canvas.toDataURL('image/png')
 }

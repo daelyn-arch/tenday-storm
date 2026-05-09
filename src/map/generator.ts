@@ -12,11 +12,13 @@ export interface GeneratedMap {
   height: number
   /** Per-tile terrain class (used for autotile + decor decisions). */
   terrain: Uint8Array
-  /** Per-tile rendered tile filename (e.g. "t421"). null for animated water cells. */
+  /** Per-tile rendered tile filename (e.g. "t421"). */
   tileNames: (string | null)[]
-  /** True iff the tile should render as the animated deep-water pattern. */
-  animated: Uint8Array
-  /** Decorative overlay sprites (trees, rocks, houses). */
+  /** Forest cell? If true, a forest cluster sprite is drawn on top. */
+  forest: Uint8Array
+  /** Forest tile variant filename (only meaningful when forest[i] === 1). */
+  forestTiles: (string | null)[]
+  /** Decorative overlay sprites (rocks, houses). */
   decor: Decor[]
   /** Multi-tile structures. */
   structures: Structure[]
@@ -119,31 +121,77 @@ function pickCorner(
   return 1
 }
 
+/**
+ * Compute "distance from land" for every water cell. Returns Uint8Array
+ * (clamped at 255). Used to render shallow vs regular vs deep water tiles
+ * so the ocean has visible depth gradient instead of a flat repeated tile.
+ */
+function computeWaterDepth(terrain: Uint8Array, w: number, h: number): Uint8Array {
+  const depth = new Uint8Array(w * h).fill(255)
+  // BFS from every land cell, distance grows outward.
+  const queue: number[] = []
+  for (let i = 0; i < terrain.length; i++) {
+    if (terrain[i] !== 5) {
+      depth[i] = 0
+      queue.push(i)
+    }
+  }
+  let head = 0
+  while (head < queue.length) {
+    const i = queue[head++]
+    const cx = i % w
+    const cy = Math.floor(i / w)
+    const d = depth[i]
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const nx = cx + dx
+      const ny = cy + dy
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue
+      const ni = ny * w + nx
+      if (depth[ni] > d + 1) {
+        depth[ni] = d + 1
+        queue.push(ni)
+      }
+    }
+  }
+  return depth
+}
+
 function autotilePass(terrain: Uint8Array, w: number, h: number) {
   const tileNames: (string | null)[] = new Array(w * h).fill(null)
-  const animated = new Uint8Array(w * h)
+  const depth = computeWaterDepth(terrain, w, h)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
+      const i = y * w + x
       const tl = pickCorner(terrain, w, h, x, y)
       const tr = pickCorner(terrain, w, h, x + 1, y)
       const bl = pickCorner(terrain, w, h, x, y + 1)
       const br = pickCorner(terrain, w, h, x + 1, y + 1)
-      // Pure deep water → animated frames
+      // Pure water — pick a depth-appropriate tile so the ocean has a
+      // visible shallow/regular/deep gradient instead of a flat repeating
+      // grid of identical tiles. Pita's depth-water tiles:
+      //   t821 = shallow ocean (terrain 7)
+      //   t801 = regular ocean (terrain 8)
+      //   t896 = deep ocean (terrain 9)
       if (tl === 5 && tr === 5 && bl === 5 && br === 5) {
-        animated[y * w + x] = 1
+        const d = depth[i]
+        tileNames[i] = d <= 1 ? 't821' : d <= 3 ? 't801' : 't896'
         continue
       }
       const id = autotileFor(tl, tr, bl, br)
       if (id) {
-        tileNames[y * w + x] = id
+        tileNames[i] = id
       } else {
-        // Unmatched combo: fall back to whatever this cell's primary biome is.
-        const t = terrain[y * w + x]
-        tileNames[y * w + x] = t === 5 ? 't461' : t === 6 ? 't681' : t === 4 ? 't441' : 't1'
+        const t = terrain[i]
+        tileNames[i] = t === 5 ? 't896' : t === 6 ? 't681' : t === 4 ? 't441' : 't1'
       }
     }
   }
-  return { tileNames, animated }
+  return { tileNames }
 }
 
 /** ---------- river carving ---------- */
@@ -202,45 +250,46 @@ function carveRivers(
   }
 }
 
-/** ---------- forest scatter ---------- */
+/** ---------- forest mask + cluster overlay ----------
+ * Forest is a SECOND layer over grass terrain. For each grass cell with
+ * moisture above the threshold, we mark it as forest and pick a Pita tree-
+ * cluster sprite. The renderer paints the cluster on top of the grass tile,
+ * so dense forest reads as a continuous mass instead of scattered sprites.
+ */
 
-const TREE_VARIANTS = ['tree_0', 'tree_1', 'tree_2', 'tree_3', 'tree_4']
+const FOREST_INTERIOR = ['t285', 't321', 't325'] // dense full-canopy variants
+const FOREST_EDGE = ['t280', 't281', 't282', 't283', 't284', 't320', 't322', 't323', 't324', 't360', 't361', 't362', 't363', 't364']
 
-function scatterForests(
+function buildForestLayer(
   terrain: Uint8Array,
   moist: Float32Array,
   w: number,
   h: number,
   rng: Rng,
-): Decor[] {
-  const out: Decor[] = []
-  // Where a tile is grass AND moisture is high, populate dense trees.
-  // Where grass + medium moisture, sparse trees.
+): { forest: Uint8Array; forestTiles: (string | null)[] } {
+  const forest = new Uint8Array(w * h)
+  // Pass 1 — mark which grass cells are forest based on moisture.
+  for (let i = 0; i < terrain.length; i++) {
+    if (terrain[i] === 1 && moist[i] > 0.55) forest[i] = 1
+  }
+  // Pass 2 — for each forest cell, pick interior or edge variant. A cell
+  // is "interior" iff all 4 cardinal neighbors are also forest; otherwise
+  // it's an edge and uses one of the partial-cluster sprites for blending.
+  const forestTiles: (string | null)[] = new Array(w * h).fill(null)
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x
-      if (terrain[i] !== 1) continue // grass only
-      const m = moist[i]
-      let count = 0
-      if (m > 0.7) count = 3
-      else if (m > 0.55) count = 1
-      else if (m > 0.45 && rng() < 0.15) count = 1
-      for (let k = 0; k < count; k++) {
-        const sprite = TREE_VARIANTS[Math.floor(rng() * TREE_VARIANTS.length)]
-        const jx = (rng() - 0.5) * 12
-        const jy = (rng() - 0.5) * 12
-        out.push({
-          x: x * 16 + 8 + jx,
-          y: y * 16 + 8 + jy,
-          size: 18 + Math.floor(rng() * 6),
-          sprite,
-        })
-      }
+      if (!forest[i]) continue
+      const isInterior =
+        (y > 0 && forest[i - w] === 1) &&
+        (y < h - 1 && forest[i + w] === 1) &&
+        (x > 0 && forest[i - 1] === 1) &&
+        (x < w - 1 && forest[i + 1] === 1)
+      const pool = isInterior ? FOREST_INTERIOR : FOREST_EDGE
+      forestTiles[i] = pool[Math.floor(rng() * pool.length)]
     }
   }
-  // Sort by y so further-back trees draw before nearer (depth illusion).
-  out.sort((a, b) => a.y - b.y)
-  return out
+  return { forest, forestTiles }
 }
 
 /** ---------- structure placement ---------- */
@@ -316,12 +365,23 @@ export function generateMap(seed: number, w: number, h: number): GeneratedMap {
   // Carve rivers (mutates terrain in place)
   carveRivers(terrain, elev, w, h, rng)
 
-  // Autotile
-  const { tileNames, animated } = autotilePass(terrain, w, h)
+  // Autotile (water depth gradient handled inside)
+  const { tileNames } = autotilePass(terrain, w, h)
 
-  // Decoration / structures
-  const decor = scatterForests(terrain, moist, w, h, rng)
+  // Forest overlay layer
+  const { forest, forestTiles } = buildForestLayer(terrain, moist, w, h, rng)
+
+  // Structures (still placeholder houses for now)
   const structures = placeStructures(terrain, w, h, rng)
 
-  return { width: w, height: h, terrain, tileNames, animated, decor, structures }
+  return {
+    width: w,
+    height: h,
+    terrain,
+    tileNames,
+    forest,
+    forestTiles,
+    decor: [],
+    structures,
+  }
 }
