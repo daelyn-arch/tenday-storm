@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { generateWorld, type GeneratedWorld } from '../world/generate'
-import { HexMap } from '../hex/HexMap'
+import { BeautifulMap } from '../map/BeautifulMap'
 import { supabase } from '../lib/supabase'
-import type { HexRow, RegionRow } from '../types/db'
+import type { HexRow } from '../types/db'
 
 function randomSeed() {
   return Math.floor(Math.random() * 0xfffffff)
@@ -29,23 +29,6 @@ export function SetupWizard() {
       return null
     }
   }, [name, seed, width, height, maxDays])
-
-  // Stub region rows so HexMap can color outlines in preview.
-  const previewRegions: RegionRow[] = useMemo(() => {
-    if (!world) return []
-    return world.regions.map((r, i) => ({ ...r, id: `preview-${i}`, campaign_id: 'preview' }))
-  }, [world])
-
-  const previewHexes = useMemo(() => {
-    if (!world) return []
-    return world.hexes.map((h) => ({
-      ...h,
-      region_id: (() => {
-        const idx = world.hexRegionIndex.get(`${h.q},${h.r}`)
-        return idx != null ? `preview-${idx}` : null
-      })(),
-    }))
-  }, [world])
 
   async function createCampaign() {
     if (!world) return
@@ -182,22 +165,7 @@ export function SetupWizard() {
         </aside>
         <main className="relative">
           {world ? (
-            <HexMap
-              width={width}
-              height={height}
-              hexes={previewHexes}
-              regions={previewRegions}
-              partyHex={{ q: world.campaign.party_q, r: world.campaign.party_r }}
-              stormHex={{ q: world.campaign.storm_q, r: world.campaign.storm_r }}
-              stormRadius={world.campaign.storm_radius}
-              nextStormHex={world.campaign.storm_path[1] ?? null}
-              finalBoss={
-                world.campaign.final_boss_q != null && world.campaign.final_boss_r != null
-                  ? { q: world.campaign.final_boss_q, r: world.campaign.final_boss_r }
-                  : null
-              }
-              mode="dm"
-            />
+            <BeautifulMap seed={seed} width={200} height={150} />
           ) : (
             <div className="p-8 text-ink-300">Adjust settings to generate a preview.</div>
           )}

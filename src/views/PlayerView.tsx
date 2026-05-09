@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useCampaign } from '../store/campaign'
-import { HexMap, type Pin } from '../hex/HexMap'
+import { BeautifulMap } from '../map/BeautifulMap'
 import { QuestsPanel } from './panels/QuestsPanel'
 import { RumorsPanel } from './panels/RumorsPanel'
 import { ItemsPanel } from './panels/ItemsPanel'
@@ -23,38 +23,7 @@ const TABS: { id: Tab; label: string }[] = [
 export function PlayerView() {
   const { id } = useParams<{ id: string }>()
   const [tab, setTab] = useState<Tab>('journal')
-  const {
-    load,
-    reset,
-    campaign,
-    hexes,
-    regions,
-    quests,
-    rumors,
-    journal,
-    selected,
-    setSelected,
-    loading,
-    error,
-  } = useCampaign()
-
-  // Players see pins only for the quests/rumors they're allowed to know about,
-  // plus journal entries (visible to all members).
-  const pins: Pin[] = useMemo(() => {
-    const out: Pin[] = []
-    for (const q of quests) {
-      if (!q.player_visible) continue
-      if (q.target_q != null && q.target_r != null) out.push({ q: q.target_q, r: q.target_r, kind: 'quest' })
-    }
-    for (const r of rumors) {
-      if (!r.collected) continue
-      if (r.target_q != null && r.target_r != null) out.push({ q: r.target_q, r: r.target_r, kind: 'rumor' })
-    }
-    for (const j of journal) {
-      if (j.target_q != null && j.target_r != null) out.push({ q: j.target_q, r: j.target_r, kind: 'journal' })
-    }
-    return out
-  }, [quests, rumors, journal])
+  const { load, reset, campaign, loading, error } = useCampaign()
 
   useEffect(() => {
     if (id) load(id)
@@ -113,52 +82,7 @@ export function PlayerView() {
 
       <div className="flex-1 grid grid-cols-[1fr_380px] min-h-0">
         <main className="relative min-h-0">
-          <HexMap
-            width={campaign.width}
-            height={campaign.height}
-            hexes={hexes}
-            regions={regions}
-            partyHex={{ q: campaign.party_q, r: campaign.party_r }}
-            stormHex={{ q: campaign.storm_q, r: campaign.storm_r }}
-            stormRadius={campaign.storm_radius}
-            nextStormHex={
-              campaign.players_see_storm_next ? (campaign.storm_path[campaign.day] ?? null) : null
-            }
-            finalBoss={null}
-            pins={pins}
-            selected={selected}
-            onSelect={(next) => setSelected(next)}
-            mode="player"
-          />
-          {selected && (() => {
-            const h = hexes.find((x) => x.q === selected.q && x.r === selected.r)
-            if (!h) return null
-            const isRevealed = h.revealed
-            const region = regions.find((r) => r.id === h.region_id)
-            const features = isRevealed ? ((h.generated?.features ?? []) as string[]) : []
-            return (
-              <div className="absolute bottom-4 left-4 panel p-3 max-w-sm text-sm">
-                <div className="font-display text-base">
-                  {isRevealed ? `${h.biome[0].toUpperCase()}${h.biome.slice(1)} (${h.q}, ${h.r})` : `Unknown (${h.q}, ${h.r})`}
-                </div>
-                {region && <div className="text-xs text-ink-300">{region.name}</div>}
-                {features.length > 0 && (
-                  <ul className="list-disc pl-5 mt-1 text-xs">
-                    {features.map((f, i) => (
-                      <li key={i}>{f}</li>
-                    ))}
-                  </ul>
-                )}
-                {!isRevealed && (
-                  <div className="text-xs text-ink-300 italic mt-1">
-                    {axialDistance({ q: h.q, r: h.r }, { q: campaign.party_q, r: campaign.party_r }) <= 1
-                      ? 'Adjacent to the party — biome glimpsed at distance.'
-                      : 'Beyond known lands.'}
-                  </div>
-                )}
-              </div>
-            )
-          })()}
+          <BeautifulMap seed={campaign.seed} width={200} height={150} />
         </main>
         <aside className="border-l border-ink-700 flex flex-col min-h-0">
           <nav className="flex border-b border-ink-700 overflow-x-auto">

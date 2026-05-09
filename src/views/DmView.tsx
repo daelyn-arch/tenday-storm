@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useCampaign } from '../store/campaign'
-import { HexMap, type Pin } from '../hex/HexMap'
+import { BeautifulMap } from '../map/BeautifulMap'
 import { HexInspector } from './panels/HexInspector'
 import { QuestsPanel } from './panels/QuestsPanel'
 import { RumorsPanel } from './panels/RumorsPanel'
@@ -33,14 +33,6 @@ export function DmView() {
     load,
     reset,
     campaign,
-    hexes,
-    regions,
-    quests,
-    rumors,
-    encounters,
-    journal,
-    selected,
-    setSelected,
     loading,
     error,
     myRole,
@@ -54,23 +46,6 @@ export function DmView() {
   }, [id, load, reset])
 
   useCampaignChannel(id ?? null)
-
-  const pins: Pin[] = useMemo(() => {
-    const out: Pin[] = []
-    for (const q of quests) {
-      if (q.target_q != null && q.target_r != null) out.push({ q: q.target_q, r: q.target_r, kind: 'quest' })
-    }
-    for (const r of rumors) {
-      if (r.target_q != null && r.target_r != null) out.push({ q: r.target_q, r: r.target_r, kind: 'rumor' })
-    }
-    for (const e of encounters) {
-      if (e.target_q != null && e.target_r != null) out.push({ q: e.target_q, r: e.target_r, kind: 'encounter' })
-    }
-    for (const j of journal) {
-      if (j.target_q != null && j.target_r != null) out.push({ q: j.target_q, r: j.target_r, kind: 'journal' })
-    }
-    return out
-  }, [quests, rumors, encounters, journal])
 
   if (loading || !campaign) {
     return (
@@ -112,28 +87,7 @@ export function DmView() {
 
       <div className="flex-1 grid grid-cols-[1fr_380px] min-h-0">
         <main className="relative min-h-0">
-          <HexMap
-            width={campaign.width}
-            height={campaign.height}
-            hexes={hexes}
-            regions={regions}
-            partyHex={{ q: campaign.party_q, r: campaign.party_r }}
-            stormHex={{ q: campaign.storm_q, r: campaign.storm_r }}
-            stormRadius={campaign.storm_radius}
-            nextStormHex={campaign.storm_path[campaign.day] ?? null}
-            finalBoss={
-              campaign.final_boss_q != null && campaign.final_boss_r != null
-                ? { q: campaign.final_boss_q, r: campaign.final_boss_r }
-                : null
-            }
-            pins={pins}
-            selected={selected}
-            onSelect={(next) => {
-              setSelected(next)
-              if (next) setTab('inspector')
-            }}
-            mode="dm"
-          />
+          <BeautifulMap seed={campaign.seed} width={200} height={150} />
         </main>
         <aside className="border-l border-ink-700 flex flex-col min-h-0">
           <nav className="flex border-b border-ink-700 overflow-x-auto">
