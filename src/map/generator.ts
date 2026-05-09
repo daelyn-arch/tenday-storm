@@ -84,10 +84,45 @@ function edgeFalloff(x: number, y: number, w: number, h: number): number {
 function classify(elev: number, _moist: number): CellTerrain {
   if (elev < 0.32) return 'water'
   if (elev < 0.40) return 'beach'
-  if (elev > 0.78) return 'cliff'
-  // grass or "wet grass"; we just call it grass for autotile purposes —
-  // forest decoration is layered on top later.
+  if (elev > 0.82) return 'cliff'
   return 'grass'
+}
+
+/**
+ * Erase isolated cliff specks. Noise can briefly spike past the cliff
+ * threshold for a single tile, which renders as a stray rock sprite on a
+ * sea of grass. Find connected cliff clusters; anything smaller than
+ * `minSize` demotes back to grass so cliffs only appear as real ranges.
+ */
+function smoothCliffs(terrain: Uint8Array, w: number, h: number, minSize = 6) {
+  const visited = new Uint8Array(w * h)
+  const queue: number[] = []
+  for (let i = 0; i < terrain.length; i++) {
+    if (terrain[i] !== 4 || visited[i]) continue
+    // flood fill connected cliff region
+    const cluster: number[] = []
+    queue.length = 0
+    queue.push(i)
+    visited[i] = 1
+    while (queue.length) {
+      const cur = queue.pop()!
+      cluster.push(cur)
+      const cx = cur % w
+      const cy = Math.floor(cur / w)
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx
+        const ny = cy + dy
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue
+        const ni = ny * w + nx
+        if (visited[ni] || terrain[ni] !== 4) continue
+        visited[ni] = 1
+        queue.push(ni)
+      }
+    }
+    if (cluster.length < minSize) {
+      for (const c of cluster) terrain[c] = 1 // demote to grass
+    }
+  }
 }
 
 /** ---------- autotile pass ---------- */
@@ -361,6 +396,9 @@ export function generateMap(seed: number, w: number, h: number): GeneratedMap {
     const t = classify(elev[i], moist[i])
     terrain[i] = TERRAIN_CODE[t]
   }
+
+  // Erase tiny cliff specks before any other pass touches them
+  smoothCliffs(terrain, w, h)
 
   // Carve rivers (mutates terrain in place)
   carveRivers(terrain, elev, w, h, rng)
