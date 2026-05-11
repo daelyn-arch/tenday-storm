@@ -165,7 +165,7 @@ export function SetupWizard() {
         </aside>
         <main className="relative">
           {world ? (
-            <BeautifulMap seed={seed} width={200} height={150} />
+            <BeautifulMap tmxUrl={`${import.meta.env.BASE_URL}textures/_pita/Scenes.tmx`} />
           ) : (
             <div className="p-8 text-ink-300">Adjust settings to generate a preview.</div>
           )}
