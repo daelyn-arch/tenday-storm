@@ -87,12 +87,7 @@ export function DmView() {
 
       <div className="flex-1 grid grid-cols-[1fr_380px] min-h-0">
         <main className="relative min-h-0">
-          <BeautifulMap
-            seed={campaign.seed}
-            width={200}
-            height={150}
-            tmxUrl={`${import.meta.env.BASE_URL}textures/_pita/Scenes.tmx`}
-          />
+          <BeautifulMap seed={campaign.seed} width={200} height={150} />
         </main>
         <aside className="border-l border-ink-700 flex flex-col min-h-0">
           <nav className="flex border-b border-ink-700 overflow-x-auto">

@@ -22,6 +22,8 @@ export interface GeneratedMap {
   decor: Decor[]
   /** Multi-tile structures. */
   structures: Structure[]
+  /** Multi-tile stamps copied from Pita's hand-crafted TMX. */
+  stamps: PlacedStamp[]
 }
 
 export interface Decor {
@@ -37,6 +39,15 @@ export interface Structure {
   w: number
   h: number
   sprite: string
+}
+
+/** A placed TMX-extracted stamp on the procedural map. The renderer copies
+ *  the named stamp's tile gids over the procedural tiles at (tileX, tileY).
+ */
+export interface PlacedStamp {
+  name: string
+  tileX: number
+  tileY: number
 }
 
 const TERRAIN_CODE: Record<CellTerrain, Terrain> = {
@@ -329,40 +340,68 @@ function buildForestLayer(
 
 /** ---------- structure placement ---------- */
 
-function placeStructures(
+/**
+ * Pick valid locations to stamp pre-made multi-tile structures from Pita's
+ * Scenes.tmx. We don't load the stamp data here — generator stays sync. The
+ * renderer fetches the actual stamps and copies their tile gids during the
+ * bake.
+ */
+function placeStamps(
   terrain: Uint8Array,
+  forest: Uint8Array,
   w: number,
   h: number,
   rng: Rng,
-): Structure[] {
-  // Find inland flat-grass spots away from water/cliff. Place small house
-  // sprites first; we'll iterate to multi-tile castle sprites later.
-  const out: Structure[] = []
-  const tries = 60
-  const placed: { x: number; y: number; r: number }[] = []
-  for (let attempt = 0; attempt < tries && out.length < 10; attempt++) {
-    const x = randInt(rng, 5, w - 6)
-    const y = randInt(rng, 5, h - 6)
-    // Require a 3x3 grass area
-    let ok = true
-    for (let dy = -1; dy <= 1 && ok; dy++) {
-      for (let dx = -1; dx <= 1 && ok; dx++) {
-        const t = terrain[(y + dy) * w + (x + dx)]
-        if (t !== 1) ok = false
+): PlacedStamp[] {
+  const out: PlacedStamp[] = []
+  // Plan: try a handful of placements per stamp type. Each kind has its
+  // own size requirement and terrain preferences.
+  const plans: { name: string; bbox: { w: number; h: number }; want: 'inland' | 'shore'; max: number }[] = [
+    { name: 'walled_city', bbox: { w: 19, h: 18 }, want: 'inland', max: 1 },
+    { name: 'fortress', bbox: { w: 16, h: 13 }, want: 'shore', max: 1 },
+    { name: 'cabin', bbox: { w: 5, h: 4 }, want: 'inland', max: 4 },
+    { name: 'watchtower', bbox: { w: 4, h: 6 }, want: 'inland', max: 3 },
+    { name: 'bridge', bbox: { w: 6, h: 4 }, want: 'shore', max: 2 },
+  ]
+  const placed: { x: number; y: number; w: number; h: number }[] = []
+  for (const plan of plans) {
+    let placedCount = 0
+    for (let attempt = 0; attempt < 80 && placedCount < plan.max; attempt++) {
+      const tx = randInt(rng, 2, w - plan.bbox.w - 2)
+      const ty = randInt(rng, 2, h - plan.bbox.h - 2)
+      // Avoid overlap with already-placed stamps (with 2-tile buffer)
+      if (
+        placed.some(
+          (p) =>
+            tx + plan.bbox.w + 2 > p.x &&
+            tx < p.x + p.w + 2 &&
+            ty + plan.bbox.h + 2 > p.y &&
+            ty < p.y + p.h + 2,
+        )
+      )
+        continue
+      // Check the footprint: mostly grass, minimal water/cliff/forest interference
+      let ok = true
+      let landCount = 0
+      let waterCount = 0
+      for (let dy = 0; dy < plan.bbox.h && ok; dy++) {
+        for (let dx = 0; dx < plan.bbox.w && ok; dx++) {
+          const t = terrain[(ty + dy) * w + (tx + dx)]
+          if (t === 4) ok = false // no cliffs under footprint
+          if (forest[(ty + dy) * w + (tx + dx)]) ok = false // no forest either
+          if (t === 5) waterCount++
+          else landCount++
+        }
       }
+      if (!ok) continue
+      const totalCells = plan.bbox.w * plan.bbox.h
+      if (plan.want === 'inland' && waterCount > 0) continue
+      if (plan.want === 'shore' && (waterCount === 0 || waterCount > totalCells / 3)) continue
+      // Place it
+      out.push({ name: plan.name, tileX: tx, tileY: ty })
+      placed.push({ x: tx, y: ty, w: plan.bbox.w, h: plan.bbox.h })
+      placedCount++
     }
-    if (!ok) continue
-    // Min spacing
-    if (placed.some((p) => Math.hypot(p.x - x, p.y - y) < 12)) continue
-    placed.push({ x, y, r: 4 })
-    const spriteVariants = ['house_0', 'house_1', 'house_2']
-    out.push({
-      x: x * 16,
-      y: y * 16,
-      w: 16,
-      h: 16,
-      sprite: spriteVariants[Math.floor(rng() * spriteVariants.length)],
-    })
   }
   return out
 }
@@ -409,8 +448,9 @@ export function generateMap(seed: number, w: number, h: number): GeneratedMap {
   // Forest overlay layer
   const { forest, forestTiles } = buildForestLayer(terrain, moist, w, h, rng)
 
-  // Structures (still placeholder houses for now)
-  const structures = placeStructures(terrain, w, h, rng)
+  // Pita TMX stamps — pre-made multi-tile structures the renderer will
+  // paint over the procedural tiles during bake.
+  const stamps = placeStamps(terrain, forest, w, h, rng)
 
   return {
     width: w,
@@ -420,6 +460,7 @@ export function generateMap(seed: number, w: number, h: number): GeneratedMap {
     forest,
     forestTiles,
     decor: [],
-    structures,
+    structures: [],
+    stamps,
   }
 }

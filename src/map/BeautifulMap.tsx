@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { generateMap, type GeneratedMap } from './generator'
+import { loadStamps } from './stamps'
 import { loadTmxMeta, renderTmx } from './tmx'
 
 interface Props {
@@ -152,6 +153,14 @@ async function bake(map: GeneratedMap): Promise<string> {
   )
   const imgMap = new Map(images)
 
+  // Stamps need direct access to the tileset atlases since they store raw
+  // TMX tile gids (not our t<id>.png filenames). Load atlases once.
+  const [overworld, tropical, stamps] = await Promise.all([
+    loadAtlas(`${base}textures/_pita/Overworld_Tileset.png`),
+    loadAtlas(`${base}textures/_pita/TropicalExtras_Tileset.png`),
+    loadStamps(base),
+  ])
+
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H
@@ -171,8 +180,7 @@ async function bake(map: GeneratedMap): Promise<string> {
     }
   }
 
-  // Pass 2 — forest cluster overlay (paints dense tree sprites on top of
-  // grass for any cell flagged as forest).
+  // Pass 2 — forest cluster overlay
   for (let y = 0; y < map.height; y++) {
     for (let x = 0; x < map.width; x++) {
       const i = y * map.width + x
@@ -185,19 +193,57 @@ async function bake(map: GeneratedMap): Promise<string> {
     }
   }
 
-  // Pass 3 — loose decor (rocks, etc.) — currently empty
-  for (const d of map.decor) {
-    const img = imgMap.get(d.sprite)
-    if (!img) continue
-    ctx.drawImage(img, d.x - d.size / 2, d.y - d.size / 2, d.size, d.size)
-  }
-
-  // Pass 4 — structures (placeholder houses)
-  for (const s of map.structures) {
-    const img = imgMap.get(s.sprite)
-    if (!img) continue
-    ctx.drawImage(img, s.x, s.y, s.w, s.h)
+  // Pass 3 — TMX stamps copied over the procedural terrain. Stamps are
+  // multi-layer; draw under → over so object-layer details land on top.
+  for (const placed of map.stamps) {
+    const stamp = stamps.get(placed.name)
+    if (!stamp) continue
+    for (const layer of stamp.layers) {
+      for (let dy = 0; dy < stamp.height; dy++) {
+        for (let dx = 0; dx < stamp.width; dx++) {
+          const gid = layer.tiles[dy * stamp.width + dx]
+          if (gid === 0) continue
+          paintTile(ctx, gid, (placed.tileX + dx) * TILE, (placed.tileY + dy) * TILE, overworld, tropical)
+        }
+      }
+    }
   }
 
   return canvas.toDataURL('image/png')
+}
+
+function loadAtlas(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error(`Failed to load atlas ${src}`))
+    img.src = src
+  })
+}
+
+function paintTile(
+  ctx: CanvasRenderingContext2D,
+  gid: number,
+  dx: number,
+  dy: number,
+  overworld: HTMLImageElement,
+  tropical: HTMLImageElement,
+) {
+  // Overworld: gids 1..1520 (40 cols × 38 rows)
+  // TropicalExtras: gids 1521..1584 (8 cols)
+  let atlas: HTMLImageElement
+  let tileId: number
+  let cols: number
+  if (gid <= 1520) {
+    atlas = overworld
+    tileId = gid - 1
+    cols = 40
+  } else {
+    atlas = tropical
+    tileId = gid - 1521
+    cols = 8
+  }
+  const sx = (tileId % cols) * TILE
+  const sy = Math.floor(tileId / cols) * TILE
+  ctx.drawImage(atlas, sx, sy, TILE, TILE, dx, dy, TILE, TILE)
 }
