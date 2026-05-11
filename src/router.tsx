@@ -7,6 +7,7 @@ import { JoinCampaign } from './views/JoinCampaign'
 import { AuthGate } from './views/AuthGate'
 import { MapPreview } from './views/MapPreview'
 import { MapLab } from './views/MapLab'
+import { ElementsLab } from './views/ElementsLab'
 
 // Hash router: paths live in the URL fragment (e.g. /#/c/abc/dm) so GitHub
 // Pages — which only serves static files — never 404s on a deep link.
@@ -15,6 +16,7 @@ export const router = createHashRouter([
   // generator side-by-side without going through the campaign flow.
   { path: '/preview', element: <MapPreview /> },
   { path: '/lab', element: <MapLab /> },
+  { path: '/elements', element: <ElementsLab /> },
   {
     path: '/',
     element: <AuthGate />,

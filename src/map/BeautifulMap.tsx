@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { loadTmxMeta, renderTmx, renderTileGrid } from './tmx'
 import { generateFromTmx } from './wfc'
 import { generatePoiMap } from './poi-generator'
+import { generateElement, type ElementType } from './elements'
 
 interface Props {
   /** TMX url to render directly (the hand-crafted source map). */
@@ -10,6 +11,8 @@ interface Props {
   wfc?: { width: number; height: number; seed: number }
   /** POI-first mode: procedurally place POIs and paint terrain around them. */
   poi?: { width: number; height: number; seed: number }
+  /** Single-element mode: render just one terrain piece in isolation. */
+  element?: { type: ElementType; seed: number }
 }
 
 const TILE = 16
@@ -21,7 +24,7 @@ const TILE = 16
  * Pita's hand-crafted examples. Next iteration: study these TMX patterns
  * to design a generator that produces output of similar quality.
  */
-export function BeautifulMap({ tmxUrl, wfc, poi }: Props) {
+export function BeautifulMap({ tmxUrl, wfc, poi, element }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [tx, setTx] = useState(0)
   const [ty, setTy] = useState(0)
@@ -33,7 +36,15 @@ export function BeautifulMap({ tmxUrl, wfc, poi }: Props) {
   useEffect(() => {
     let cancelled = false
     const base = (import.meta as ImportMeta).env.BASE_URL
-    if (poi) {
+    if (element) {
+      ;(async () => {
+        const generated = await generateElement(element.type, element.seed, base)
+        if (cancelled) return
+        setMapDims({ width: generated.width, height: generated.height })
+        const src = await renderTileGrid(generated, base)
+        if (!cancelled) setBakedSrc(src)
+      })().catch((e) => console.error('Element generation failed', e))
+    } else if (poi) {
       ;(async () => {
         const generated = await generatePoiMap(poi.seed, poi.width, poi.height, base)
         if (cancelled) return
@@ -61,7 +72,7 @@ export function BeautifulMap({ tmxUrl, wfc, poi }: Props) {
     return () => {
       cancelled = true
     }
-  }, [tmxUrl, wfc, poi])
+  }, [tmxUrl, wfc, poi, element])
 
   useEffect(() => {
     const c = containerRef.current
