@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { loadTmxMeta, renderTmx } from './tmx'
+import { loadTmxMeta, renderTmx, renderTileGrid } from './tmx'
+import { generateFromTmx } from './wfc'
 
 interface Props {
-  /** TMX url to render. */
-  tmxUrl: string
+  /** TMX url to render directly (the hand-crafted source map). */
+  tmxUrl?: string
+  /**
+   * Optional WFC mode: train on `tmxUrl` and generate a new map of the
+   * given size with this seed.
+   */
+  wfc?: { width: number; height: number; seed: number }
 }
 
 const TILE = 16
@@ -15,7 +21,7 @@ const TILE = 16
  * Pita's hand-crafted examples. Next iteration: study these TMX patterns
  * to design a generator that produces output of similar quality.
  */
-export function BeautifulMap({ tmxUrl }: Props) {
+export function BeautifulMap({ tmxUrl, wfc }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [tx, setTx] = useState(0)
   const [ty, setTy] = useState(0)
@@ -27,17 +33,27 @@ export function BeautifulMap({ tmxUrl }: Props) {
   useEffect(() => {
     let cancelled = false
     const base = (import.meta as ImportMeta).env.BASE_URL
-    ;(async () => {
-      const meta = await loadTmxMeta(tmxUrl)
-      if (cancelled) return
-      setMapDims(meta)
-      const src = await renderTmx(tmxUrl, base)
-      if (!cancelled) setBakedSrc(src)
-    })().catch((e) => console.error('TMX render failed', e))
+    if (wfc && tmxUrl) {
+      ;(async () => {
+        const generated = await generateFromTmx(tmxUrl, wfc.width, wfc.height, wfc.seed)
+        if (cancelled) return
+        setMapDims({ width: generated.width, height: generated.height })
+        const src = await renderTileGrid(generated, base)
+        if (!cancelled) setBakedSrc(src)
+      })().catch((e) => console.error('WFC generation failed', e))
+    } else if (tmxUrl) {
+      ;(async () => {
+        const meta = await loadTmxMeta(tmxUrl)
+        if (cancelled) return
+        setMapDims(meta)
+        const src = await renderTmx(tmxUrl, base)
+        if (!cancelled) setBakedSrc(src)
+      })().catch((e) => console.error('TMX render failed', e))
+    }
     return () => {
       cancelled = true
     }
-  }, [tmxUrl])
+  }, [tmxUrl, wfc])
 
   useEffect(() => {
     const c = containerRef.current

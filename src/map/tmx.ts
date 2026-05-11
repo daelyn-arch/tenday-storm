@@ -65,3 +65,47 @@ export async function loadTmxMeta(tmxUrl: string): Promise<{ width: number; heig
   const map = await parseTmx(tmxUrl)
   return { width: map.width, height: map.height }
 }
+
+/**
+ * Render an in-memory tile-grid (e.g. WFC output) to a PNG data URL using
+ * the same atlas-based painting as renderTmx().
+ */
+export async function renderTileGrid(
+  map: { width: number; height: number; layers: { name: string; tiles: number[] }[] },
+  base: string,
+): Promise<string> {
+  const [overworld, tropical] = await Promise.all([
+    loadImage(`${base}textures/_pita/Overworld_Tileset.png`),
+    loadImage(`${base}textures/_pita/TropicalExtras_Tileset.png`),
+  ])
+  const canvas = document.createElement('canvas')
+  canvas.width = map.width * TILE
+  canvas.height = map.height * TILE
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('canvas context unavailable')
+  ctx.imageSmoothingEnabled = false
+  for (const layer of map.layers) {
+    for (let i = 0; i < layer.tiles.length; i++) {
+      const gid = layer.tiles[i]
+      if (gid === 0) continue
+      let atlas: HTMLImageElement
+      let tileId: number
+      let cols: number
+      if (gid <= 1520) {
+        atlas = overworld
+        tileId = gid - 1
+        cols = OVERWORLD_COLS
+      } else {
+        atlas = tropical
+        tileId = gid - 1521
+        cols = 8
+      }
+      const srcX = (tileId % cols) * TILE
+      const srcY = Math.floor(tileId / cols) * TILE
+      const dx = (i % map.width) * TILE
+      const dy = Math.floor(i / map.width) * TILE
+      ctx.drawImage(atlas, srcX, srcY, TILE, TILE, dx, dy, TILE, TILE)
+    }
+  }
+  return canvas.toDataURL('image/png')
+}
