@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { generateMap, type GeneratedMap } from './generator'
+import { loadTmxMeta, renderTmx } from './tmx'
 
 interface Props {
   seed: number
   width: number
   height: number
+  /**
+   * If set, render this Tiled .tmx file directly (treated as source of truth
+   * for tile placements) instead of generating procedurally. Useful for
+   * showing what Pita's hand-crafted example maps look like.
+   */
+  tmxUrl?: string
 }
 
 const TILE = 16
@@ -16,8 +23,13 @@ const TILE = 16
  * single repeating animated frame was creating a visible grid that was
  * worse than no animation. Will revisit with multi-cell foam sprites later).
  */
-export function BeautifulMap({ seed, width, height }: Props) {
-  const map = useMemo(() => generateMap(seed, width, height), [seed, width, height])
+export function BeautifulMap({ seed, width, height, tmxUrl }: Props) {
+  // TMX takes precedence: if a tmxUrl is provided, the map is hand-crafted
+  // and we just render it. Otherwise generate procedurally.
+  const generatedMap = useMemo(
+    () => (tmxUrl ? null : generateMap(seed, width, height)),
+    [seed, width, height, tmxUrl],
+  )
 
   const containerRef = useRef<HTMLDivElement>(null)
   const [tx, setTx] = useState(0)
@@ -25,31 +37,47 @@ export function BeautifulMap({ seed, width, height }: Props) {
   const [scale, setScale] = useState(1)
   const dragging = useRef<{ x: number; y: number; tx: number; ty: number } | null>(null)
   const [bakedSrc, setBakedSrc] = useState<string | null>(null)
+  // For TMX maps, we need the actual width/height from the file rather than
+  // the props (which describe a procedural generation that isn't happening).
+  const [mapDims, setMapDims] = useState<{ width: number; height: number }>({ width, height })
 
   useEffect(() => {
     let cancelled = false
-    bake(map).then((src) => {
-      if (!cancelled) setBakedSrc(src)
-    })
+    const base = (import.meta as ImportMeta).env.BASE_URL
+    if (tmxUrl) {
+      ;(async () => {
+        const meta = await loadTmxMeta(tmxUrl)
+        if (cancelled) return
+        setMapDims(meta)
+        const src = await renderTmx(tmxUrl, base)
+        if (!cancelled) setBakedSrc(src)
+      })().catch((e) => console.error('TMX render failed', e))
+    } else if (generatedMap) {
+      setMapDims({ width: generatedMap.width, height: generatedMap.height })
+      bake(generatedMap).then((src) => {
+        if (!cancelled) setBakedSrc(src)
+      })
+    }
     return () => {
       cancelled = true
     }
-  }, [map])
+  }, [generatedMap, tmxUrl])
 
   useEffect(() => {
     const c = containerRef.current
     if (!c) return
     const cw = c.clientWidth
     const ch = c.clientHeight
-    const mapW = map.width * TILE
-    const mapH = map.height * TILE
+    const mapW = mapDims.width * TILE
+    const mapH = mapDims.height * TILE
+    if (mapW === 0 || mapH === 0) return
     const sx = cw / mapW
     const sy = ch / mapH
     const s = Math.min(sx, sy) * 0.95
     setScale(s)
     setTx((cw - mapW * s) / 2)
     setTy((ch - mapH * s) / 2)
-  }, [map.width, map.height])
+  }, [mapDims.width, mapDims.height])
 
   return (
     <div
@@ -77,7 +105,7 @@ export function BeautifulMap({ seed, width, height }: Props) {
         const mx = e.clientX - rect.left
         const my = e.clientY - rect.top
         const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-        const fitScale = Math.min(c.clientWidth / (map.width * TILE), c.clientHeight / (map.height * TILE)) * 0.95
+        const fitScale = Math.min(c.clientWidth / (mapDims.width * TILE), c.clientHeight / (mapDims.height * TILE)) * 0.95
         const newScale = Math.max(fitScale * 0.9, Math.min(8, scale * factor))
         setTx(mx - (mx - tx) * (newScale / scale))
         setTy(my - (my - ty) * (newScale / scale))
@@ -91,8 +119,8 @@ export function BeautifulMap({ seed, width, height }: Props) {
               href={bakedSrc}
               x={0}
               y={0}
-              width={map.width * TILE}
-              height={map.height * TILE}
+              width={mapDims.width * TILE}
+              height={mapDims.height * TILE}
               preserveAspectRatio="none"
             />
           )}
