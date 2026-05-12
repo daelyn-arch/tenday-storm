@@ -7,13 +7,13 @@ import { createNoise2D } from 'simplex-noise'
 import { makeRng, type Rng } from '../world/rng'
 import {
   AUTOTILE,
-  FOREST_EDGE_GIDS,
   FOREST_INTERIOR_GIDS,
   OCEAN_DEEP_GID,
   OCEAN_REGULAR_GID,
   OCEAN_SHALLOW_GID,
 } from './autotile'
 import { loadStamps } from './stamps'
+import { loadForestLookup, pickForestGid } from './forest-autotile'
 
 export interface ElementMap {
   width: number
@@ -139,20 +139,27 @@ function genPlains(_rng: Rng): ElementMap {
   }
 }
 
-/** Forest patch — grass base with a connected forest cluster in the middle. */
-function genForest(rng: Rng): ElementMap {
+/**
+ * Forest patch — grass base with a forest mass picked using the Pita-
+ * learned autotile lookup (forest-autotile.ts scans Scenes.tmx +
+ * GuideExamples.tmx to find which forest tile Pita uses for each 4-side
+ * neighbor pattern, since the TSX doesn't formally tag these).
+ */
+async function genForest(rng: Rng, base: string): Promise<ElementMap> {
+  const lookup = await loadForestLookup(base)
   const terrain = new Uint8Array(SIZE * SIZE).fill(TERRAIN_GRASS)
   const noise = createNoise2D(rng)
   const mask = new Uint8Array(SIZE * SIZE)
-  // Build a blob centred on the canvas using radial-falloff noise.
   const cx = SIZE / 2
   const cy = SIZE / 2
-  const radius = SIZE * 0.4
+  // Larger blob — most cells need to be interior for the autotile to look
+  // like a continuous forest mass instead of scattered shadowed sprites.
+  const radius = SIZE * 0.5
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
       const d = Math.hypot(x - cx, y - cy) / radius
-      const n = (noise(x * 0.25, y * 0.25) + 1) / 2
-      if (n - d * 0.6 > 0.35) mask[y * SIZE + x] = 1
+      const n = (noise(x * 0.22, y * 0.22) + 1) / 2
+      if (n - d * 0.55 > 0.3) mask[y * SIZE + x] = 1
     }
   }
   const forest = new Array<number>(SIZE * SIZE).fill(0)
@@ -160,13 +167,14 @@ function genForest(rng: Rng): ElementMap {
     for (let x = 0; x < SIZE; x++) {
       const i = y * SIZE + x
       if (!mask[i]) continue
-      const interior =
-        (y > 0 && mask[i - SIZE] === 1) &&
-        (y < SIZE - 1 && mask[i + SIZE] === 1) &&
-        (x > 0 && mask[i - 1] === 1) &&
-        (x < SIZE - 1 && mask[i + 1] === 1)
-      const pool = interior ? FOREST_INTERIOR_GIDS : FOREST_EDGE_GIDS
-      forest[i] = pool[Math.floor(rng() * pool.length)]
+      // Build the 4-side pattern this cell sits in.
+      let pattern = 0
+      if (y > 0 && mask[i - SIZE]) pattern |= 0b0001 // north
+      if (x < SIZE - 1 && mask[i + 1]) pattern |= 0b0010 // east
+      if (y < SIZE - 1 && mask[i + SIZE]) pattern |= 0b0100 // south
+      if (x > 0 && mask[i - 1]) pattern |= 0b1000 // west
+      const gid = pickForestGid(lookup, pattern, rng)
+      if (gid != null) forest[i] = gid
     }
   }
   return {
@@ -423,7 +431,7 @@ export async function generateElement(
     case 'plains':
       return genPlains(rng)
     case 'forest':
-      return genForest(rng)
+      return genForest(rng, base)
     case 'hills':
       return genHills(rng)
     case 'mountain_range':
