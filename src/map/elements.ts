@@ -13,7 +13,7 @@ import {
   OCEAN_SHALLOW_GID,
 } from './autotile'
 import { loadStamps } from './stamps'
-import { loadForestLookup, pickForestGid } from './forest-autotile'
+import { loadForestLookup, placeConstrainedForest } from './forest-autotile'
 
 export interface ElementMap {
   width: number
@@ -162,21 +162,11 @@ async function genForest(rng: Rng, base: string): Promise<ElementMap> {
       if (n - d * 0.55 > 0.3) mask[y * SIZE + x] = 1
     }
   }
-  const forest = new Array<number>(SIZE * SIZE).fill(0)
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const i = y * SIZE + x
-      if (!mask[i]) continue
-      // Build the 4-side pattern this cell sits in.
-      let pattern = 0
-      if (y > 0 && mask[i - SIZE]) pattern |= 0b0001 // north
-      if (x < SIZE - 1 && mask[i + 1]) pattern |= 0b0010 // east
-      if (y < SIZE - 1 && mask[i + SIZE]) pattern |= 0b0100 // south
-      if (x > 0 && mask[i - 1]) pattern |= 0b1000 // west
-      const gid = pickForestGid(lookup, pattern, rng)
-      if (gid != null) forest[i] = gid
-    }
-  }
+  // Center-out constrained placement: the new tile at every step is one
+  // Pita actually places adjacent to its already-placed neighbors. Edges
+  // of the forest mass automatically pick tiles whose grass-side is
+  // among Pita's observed boundary placements.
+  const forest = placeConstrainedForest(lookup, mask, SIZE, SIZE, rng)
   return {
     width: SIZE,
     height: SIZE,
