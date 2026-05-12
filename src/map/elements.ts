@@ -3,7 +3,6 @@
 // that one feature without map-scale noise. Once each element looks good
 // these become the building blocks for the full-map composer.
 
-import { createNoise2D } from 'simplex-noise'
 import { makeRng, type Rng } from '../world/rng'
 import {
   AUTOTILE,
@@ -105,6 +104,65 @@ function autotileBase(terrain: Uint8Array, w: number, h: number): number[] {
   return out
 }
 
+// ---------------- shared element helpers ----------------
+
+/**
+ * Seed-and-grow blob mask. Picks 1-3 seed cells and expands outward over
+ * many iterations, biased toward cells that already have forest neighbors.
+ * Produces clean rounded forest masses rather than the noise-based version
+ * that often produced single-cell spaghetti bridges.
+ *
+ * After growth: erode any cell with fewer than 2 forest neighbors so no
+ * thin tendrils survive.
+ */
+function growForestBlobs(rng: Rng, w: number, h: number): Uint8Array {
+  const mask = new Uint8Array(w * h)
+  const seedCount = 1 + Math.floor(rng() * 2)
+  for (let i = 0; i < seedCount; i++) {
+    const x = 2 + Math.floor(rng() * (w - 4))
+    const y = 2 + Math.floor(rng() * (h - 4))
+    mask[y * w + x] = 1
+  }
+  // Grow gently. Each iteration adds at most a fixed budget of cells so
+  // forests don't explosively fill the canvas. 8 iterations × 4 cells ≈
+  // ~30-cell blob per seed, which matches Pita's reference shots.
+  for (let iter = 0; iter < 8; iter++) {
+    const candidates: { idx: number; weight: number }[] = []
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x
+        if (mask[i]) continue
+        let count = 0
+        if (mask[i - w]) count++
+        if (mask[i + w]) count++
+        if (mask[i - 1]) count++
+        if (mask[i + 1]) count++
+        if (count > 0) candidates.push({ idx: i, weight: count + rng() })
+      }
+    }
+    if (candidates.length === 0) break
+    candidates.sort((a, b) => b.weight - a.weight)
+    const budget = Math.min(4, candidates.length)
+    for (let k = 0; k < budget; k++) mask[candidates[k].idx] = 1
+  }
+  // Erode: any cell with <2 forest neighbors gets removed (kills tendrils
+  // and stray singletons). One pass is enough.
+  const eroded = new Uint8Array(mask)
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x
+      if (!eroded[i]) continue
+      let count = 0
+      if (mask[i - w]) count++
+      if (mask[i + w]) count++
+      if (mask[i - 1]) count++
+      if (mask[i + 1]) count++
+      if (count < 2) eroded[i] = 0
+    }
+  }
+  return eroded
+}
+
 // ---------------- elements ----------------
 
 export const ELEMENT_TYPES = [
@@ -148,20 +206,7 @@ function genPlains(_rng: Rng): ElementMap {
 async function genForest(rng: Rng, base: string): Promise<ElementMap> {
   const lookup = await loadForestLookup(base)
   const terrain = new Uint8Array(SIZE * SIZE).fill(TERRAIN_GRASS)
-  const noise = createNoise2D(rng)
-  const mask = new Uint8Array(SIZE * SIZE)
-  const cx = SIZE / 2
-  const cy = SIZE / 2
-  // Larger blob — most cells need to be interior for the autotile to look
-  // like a continuous forest mass instead of scattered shadowed sprites.
-  const radius = SIZE * 0.5
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const d = Math.hypot(x - cx, y - cy) / radius
-      const n = (noise(x * 0.22, y * 0.22) + 1) / 2
-      if (n - d * 0.55 > 0.3) mask[y * SIZE + x] = 1
-    }
-  }
+  const mask = growForestBlobs(rng, SIZE, SIZE)
   // Center-out constrained placement: the new tile at every step is one
   // Pita actually places adjacent to its already-placed neighbors. Edges
   // of the forest mass automatically pick tiles whose grass-side is

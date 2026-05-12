@@ -215,14 +215,20 @@ export function placeConstrainedForest(
       }
       let pick: number
       if (valid && valid.size > 0) {
-        // Weight valid tiles by their overall frequency so common tiles win.
+        // Bias toward Pita's tiles for THIS cell's pattern. So an
+        // interior cell (pattern 0b1111) heavily prefers the true
+        // interior tiles (285/321/325) over edge tiles that happen to
+        // also satisfy the pair constraints.
+        const pattern = computePattern(mask, width, height, ni)
+        const patternEnts = lookup.byPattern.get(pattern) ?? []
+        const patternFreq = new Map(patternEnts.map((e) => [e.gid, e.freq]))
         const weighted: { gid: number; freq: number }[] = []
         for (const tile of valid) {
-          let f = 0
-          for (const ents of lookup.byPattern.values()) {
-            for (const e of ents) if (e.gid === tile) f += e.freq
-          }
-          weighted.push({ gid: tile, freq: f || 1 })
+          // Strong preference for tiles Pita uses for this pattern;
+          // small floor for tiles that satisfy the pair constraint but
+          // appear in other patterns.
+          const patFreq = patternFreq.get(tile) ?? 0
+          weighted.push({ gid: tile, freq: patFreq * 10 + 1 })
         }
         pick = sampleByFreq(weighted, rand)
       } else {
