@@ -22,6 +22,28 @@ export default {
           600: '#3f2e6b',
           700: '#241945',
         },
+        // Forged-iron accent palette
+        gold: {
+          400: '#f0c878',
+          500: '#d9a85a',
+          600: '#a87838',
+          700: '#6b4818',
+        },
+        ember: {
+          400: '#ff8a4a',
+          500: '#d97a4a',
+          600: '#a85a2a',
+        },
+        leaf: {
+          400: '#9be6c4',
+          500: '#6bbf7a',
+          600: '#3f8a4a',
+        },
+        blood: {
+          400: '#ff8a8a',
+          500: '#a83838',
+          600: '#7a2424',
+        },
       },
       fontFamily: {
         display: ['Cinzel', 'Georgia', 'serif'],

@@ -12,18 +12,31 @@ export const BIOMES: Biome[] = [
   'tundra',
 ]
 
+// Painted-miniature palette — warm, characterful biome fills.
+// Each color has a matching "shadow" tone used for the inner-rim ring that
+// gives every tile some depth (see HexMap.tsx).
 export const BIOME_COLOR: Record<Biome, string> = {
-  ocean: '#1a3550',
-  // Coast is a pale beach sand — clearly lighter than desert so the two read
-  // as different biomes at any zoom.
-  coast: '#f0e2b8',
-  plains: '#8aa45a',
-  forest: '#3d6a3a',
-  hills: '#7a8a4a',
-  mountain: '#7d6f5a',
-  desert: '#d6b87a',
-  swamp: '#4a5b3a',
-  tundra: '#cfd8dc',
+  ocean:    '#2e567a',
+  coast:    '#e8d9a8',
+  plains:   '#94b063',
+  forest:   '#345230',
+  hills:    '#a07f4f',
+  mountain: '#766558',
+  desert:   '#d9b673',
+  swamp:    '#4d6638',
+  tundra:   '#c8d0d4',
+}
+
+export const BIOME_SHADOW: Record<Biome, string> = {
+  ocean:    '#16324f',
+  coast:    '#b59a5a',
+  plains:   '#5b7a36',
+  forest:   '#152619',
+  hills:    '#5e4423',
+  mountain: '#3a2f26',
+  desert:   '#9a7032',
+  swamp:    '#28401d',
+  tundra:   '#5a6f7a',
 }
 
 export const BIOME_LABEL: Record<Biome, string> = {

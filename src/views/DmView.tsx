@@ -11,6 +11,8 @@ import { RegionsPanel } from './panels/RegionsPanel'
 import { WorldPanel } from './panels/WorldPanel'
 import { JournalPanel } from './panels/JournalPanel'
 import { useCampaignChannel } from '../realtime/useCampaignChannel'
+import { axialDistance } from '../hex/coords'
+import { Display, Eyebrow, DayRing, StatusPill, Icons } from '../ui/forged'
 
 type Tab = 'inspector' | 'quests' | 'rumors' | 'items' | 'encounters' | 'regions' | 'world' | 'journal'
 
@@ -75,7 +77,7 @@ export function DmView() {
   if (loading || !campaign) {
     return (
       <div className="min-h-screen flex items-center justify-center text-ink-300">
-        {error ? <span className="text-red-400">{error}</span> : 'Loading campaign…'}
+        {error ? <span className="text-blood-400">{error}</span> : 'Loading campaign…'}
       </div>
     )
   }
@@ -83,7 +85,7 @@ export function DmView() {
   if (myRole !== 'dm') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-3 text-ink-200">
-        <div>You're a player on this campaign.</div>
+        <div>You&rsquo;re a player on this campaign.</div>
         <Link to={`/c/${campaign.id}/play`} className="btn btn-primary">
           Open player view
         </Link>
@@ -91,21 +93,40 @@ export function DmView() {
     )
   }
 
+  // Storm proximity for the header pill
+  const stormDist = axialDistance(
+    { q: campaign.party_q, r: campaign.party_r },
+    { q: campaign.storm_q, r: campaign.storm_r },
+  )
+  const stormEdgeDist = Math.max(0, stormDist - campaign.storm_radius)
+  const inStorm = stormEdgeDist === 0
+  const stormTone: 'safe' | 'caution' | 'danger' | 'storm' =
+    inStorm ? 'danger' : stormEdgeDist <= 1 ? 'caution' : stormEdgeDist <= 3 ? 'storm' : 'safe'
+  const stormIcon = inStorm ? <Icons.Flame size={11} /> : <Icons.Wind size={11} />
+  const stormLabel = inStorm
+    ? 'In the storm'
+    : `Storm ${stormEdgeDist} hex${stormEdgeDist === 1 ? '' : 'es'}`
+
   return (
     <div className="h-screen flex flex-col">
-      <header className="iron-banner px-4 py-2 flex items-center justify-between gap-3">
-        <div className="flex items-baseline gap-3 min-w-0">
-          <h1 className="font-display text-xl truncate">{campaign.name}</h1>
-          <span className="text-ink-300 text-xs">
-            DM · Day {campaign.day}/{campaign.max_days}
-          </span>
+      <header className="iron-banner px-5 py-2.5 flex items-center gap-4 min-h-[64px]">
+        <Icons.Storm size={22} />
+        <div className="min-w-0">
+          <Display as="h1" className="text-xl truncate leading-tight">{campaign.name}</Display>
+          <Eyebrow>Dungeon Master · seed {campaign.seed}</Eyebrow>
         </div>
-        <div className="flex items-center gap-2">
-          <Link to="/" className="btn">
+
+        <div className="ml-auto flex items-center gap-4">
+          <DayRing day={campaign.day} max={campaign.max_days} size={44} />
+          <StatusPill tone={stormTone} icon={stormIcon}>{stormLabel}</StatusPill>
+          <Link to="/" className="btn btn-ghost btn-sm">
             Campaigns
           </Link>
-          <button className="btn" onClick={() => navigate(`/c/${campaign.id}/play`)}>
-            Player preview
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={() => navigate(`/c/${campaign.id}/play`)}
+          >
+            <Icons.Eye size={12} /> Player preview
           </button>
         </div>
       </header>
@@ -136,13 +157,17 @@ export function DmView() {
           />
         </main>
         <aside className="border-l border-ink-700 flex flex-col min-h-0">
-          <nav className="flex border-b border-ink-700 overflow-x-auto">
+          <nav className="flex border-b border-ink-700 overflow-x-auto" role="tablist" aria-label="Campaign panels">
             {TABS.map((t) => (
               <button
                 key={t.id}
+                role="tab"
+                aria-selected={tab === t.id}
                 onClick={() => setTab(t.id)}
-                className={`px-3 py-2 text-sm border-r border-ink-700 whitespace-nowrap ${
-                  tab === t.id ? 'bg-storm-700/50 text-ink-50' : 'text-ink-300 hover:text-ink-100'
+                className={`px-3 py-2.5 text-xs font-display uppercase tracking-wider border-r border-ink-700 whitespace-nowrap min-h-[40px] transition-colors ${
+                  tab === t.id
+                    ? 'bg-storm-700/60 text-ink-50 border-t-2 border-t-gold-500 -mt-px'
+                    : 'text-ink-300 hover:text-ink-100'
                 }`}
               >
                 {t.label}

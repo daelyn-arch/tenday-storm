@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Outlet } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, supabaseConfigured } from '../lib/supabase'
+import { Display, Eyebrow, StatusPill, Icons } from '../ui/forged'
 
 type Mode = 'signin' | 'signup'
 
@@ -31,9 +32,10 @@ export function AuthGate() {
   if (!supabaseConfigured) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="panel p-6 max-w-lg space-y-3">
-          <h1 className="font-display text-2xl">Supabase not configured</h1>
-          <p className="text-ink-200 text-sm">
+        <div className="panel p-8 max-w-lg space-y-3">
+          <Eyebrow>Setup required</Eyebrow>
+          <Display as="h1" className="text-3xl">Supabase not configured</Display>
+          <p className="text-ink-200">
             Copy <code className="text-storm-400">.env.example</code> to <code className="text-storm-400">.env</code> and set
             <code className="text-storm-400"> VITE_SUPABASE_URL</code> and{' '}
             <code className="text-storm-400">VITE_SUPABASE_ANON_KEY</code> from your Supabase project, then restart{' '}
@@ -52,7 +54,7 @@ export function AuthGate() {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <form
-          className="panel p-6 max-w-md w-full space-y-4"
+          className="panel p-8 max-w-md w-full space-y-5"
           onSubmit={async (e) => {
             e.preventDefault()
             setError(null)
@@ -64,12 +66,10 @@ export function AuthGate() {
                 if (error) {
                   setError(error.message)
                 } else if (!data.session) {
-                  // Email confirmation is on. Tell the user.
                   setInfo(
                     'Account created — check your email to confirm, OR disable "Confirm email" in Supabase → Authentication → Providers → Email and sign in.',
                   )
                 }
-                // If session is set, onAuthStateChange will route us through.
               } else {
                 const { error } = await supabase.auth.signInWithPassword({ email, password })
                 if (error) setError(error.message)
@@ -79,36 +79,46 @@ export function AuthGate() {
             }
           }}
         >
-          <h1 className="font-display text-3xl">Tenday Storm</h1>
+          {/* Crest */}
+          <div className="flex flex-col items-center gap-3 pb-2">
+            <div
+              className="w-14 h-14 rounded-full flex items-center justify-center text-ink-900"
+              style={{
+                background: 'radial-gradient(circle at 35% 30%, #f4cb6a, #a67c2f 60%, #6a4a14)',
+                border: '2px solid #6b4818',
+                boxShadow: 'inset 0 2px 6px rgba(255,235,180,.45), 0 4px 10px rgba(0,0,0,.45)',
+              }}
+              aria-hidden="true"
+            >
+              <Icons.Storm size={28} />
+            </div>
+            <Eyebrow>Campaign Companion</Eyebrow>
+            <Display as="h1" className="text-3xl text-center">Tenday Storm</Display>
+          </div>
 
-          <div className="flex gap-2 text-sm">
+          {/* Sign-in / sign-up tabs */}
+          <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="Authentication mode">
             <button
               type="button"
-              className={`flex-1 py-1.5 rounded border ${
-                mode === 'signin' ? 'bg-storm-700/60 border-storm-400/40 text-ink-50' : 'border-ink-400/30 text-ink-300'
-              }`}
-              onClick={() => {
-                setMode('signin')
-                setError(null)
-                setInfo(null)
-              }}
+              role="tab"
+              aria-selected={mode === 'signin'}
+              className={`btn ${mode === 'signin' ? 'btn-gold' : 'btn-ghost'}`}
+              onClick={() => { setMode('signin'); setError(null); setInfo(null) }}
             >
               Sign in
             </button>
             <button
               type="button"
-              className={`flex-1 py-1.5 rounded border ${
-                mode === 'signup' ? 'bg-storm-700/60 border-storm-400/40 text-ink-50' : 'border-ink-400/30 text-ink-300'
-              }`}
-              onClick={() => {
-                setMode('signup')
-                setError(null)
-                setInfo(null)
-              }}
+              role="tab"
+              aria-selected={mode === 'signup'}
+              className={`btn ${mode === 'signup' ? 'btn-gold' : 'btn-ghost'}`}
+              onClick={() => { setMode('signup'); setError(null); setInfo(null) }}
             >
               Sign up
             </button>
           </div>
+
+          <div className="divider-gold" />
 
           <label className="block">
             <span className="label-tiny">Email</span>
@@ -136,12 +146,24 @@ export function AuthGate() {
             />
           </label>
 
-          {error && <div className="text-red-400 text-sm">{error}</div>}
-          {info && <div className="text-storm-400 text-sm">{info}</div>}
+          {error && (
+            <StatusPill tone="danger" icon={<Icons.X size={11} />}>
+              {error}
+            </StatusPill>
+          )}
+          {info && (
+            <StatusPill tone="storm" icon={<Icons.Check size={11} />}>
+              {info}
+            </StatusPill>
+          )}
 
-          <button className="btn btn-primary w-full" type="submit" disabled={submitting}>
-            {submitting ? '…' : mode === 'signup' ? 'Create account' : 'Sign in'}
+          <button className="btn btn-primary btn-lg w-full" type="submit" disabled={submitting}>
+            {submitting ? 'Working…' : mode === 'signup' ? 'Create account' : 'Begin the Tenday'}
           </button>
+
+          <p className="text-center text-xs text-ink-300 italic">
+            One DM, one realm. Players join by invite link.
+          </p>
         </form>
       </div>
     )

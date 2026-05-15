@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -10,8 +10,6 @@ html, body, #root {
 
 body {
   @apply text-ink-100 font-body antialiased;
-  /* Treasure-chest wood plank background, tiled. A light overlay tames
-     contrast so panels still read on top. */
   background-color: #2a1810;
   background-image: linear-gradient(rgba(15, 8, 4, 0.35), rgba(15, 8, 4, 0.35)),
     url('/textures/wood.jpg');
@@ -32,27 +30,58 @@ body {
 }
 
 @layer components {
+  /* ─── Buttons ──────────────────────────────────────────────────────
+     ≥40px hit target, focus-visible gold ring, tone via -primary/-danger/-gold.
+     Sizes: default = md, .btn-sm = compact, .btn-lg = primary CTA. */
   .btn {
-    @apply px-3 py-1.5 rounded border border-ink-400/40 bg-ink-700 hover:bg-ink-600 text-ink-100 text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded
+           border border-ink-400/40 bg-ink-700 hover:bg-ink-600
+           text-ink-100 text-sm font-display tracking-wide uppercase
+           transition-colors min-h-[40px]
+           disabled:opacity-40 disabled:cursor-not-allowed;
   }
+  .btn:focus-visible {
+    @apply outline-none ring-2 ring-gold-400 ring-offset-2 ring-offset-ink-900;
+  }
+  .btn-sm { @apply px-3 py-1.5 min-h-[36px] text-xs; }
+  .btn-lg { @apply px-5 py-3 min-h-[48px] text-base; }
   .btn-primary {
-    @apply bg-storm-600 hover:bg-storm-500 border-storm-400/40;
+    @apply bg-storm-600 hover:bg-storm-500 border-storm-400/40 text-white;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 2px 0 #241945, 0 0 12px rgba(154,127,191,.25);
   }
+  .btn-gold {
+    @apply text-ink-900 border-gold-600;
+    background-image: linear-gradient(180deg, #f0c878, #a87838);
+    box-shadow: inset 0 1px 0 rgba(255,235,180,.5), 0 1px 0 rgba(80,50,15,.3);
+  }
+  .btn-gold:hover { background-image: linear-gradient(180deg, #f7d68e, #b88842); }
   .btn-danger {
-    @apply bg-red-900 hover:bg-red-800 border-red-500/40;
+    @apply bg-blood-600 hover:bg-blood-500 border-blood-400/40 text-white;
   }
+  .btn-ghost {
+    @apply bg-transparent border-gold-500/30 text-ink-200;
+  }
+  .btn-ghost:hover { @apply text-ink-50 border-gold-400/50; }
+
+  /* ─── Inputs ───────────────────────────────────────────────────────
+     Min 40px hit target, focus-visible gold ring. */
   .input {
-    @apply px-2 py-1.5 rounded bg-ink-900 border border-ink-400/30 text-ink-100 text-sm w-full focus:outline-none focus:border-storm-400;
+    @apply px-3 py-2 rounded bg-ink-900 border border-ink-400/30
+           text-ink-100 text-sm w-full min-h-[40px]
+           focus:outline-none focus:border-gold-400
+           focus-visible:ring-2 focus-visible:ring-gold-400 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900;
   }
   .label-tiny {
-    @apply text-xs uppercase tracking-wider text-ink-300 mb-1 block;
+    @apply text-[11px] uppercase tracking-[0.2em] font-display text-ink-300 mb-1.5 block;
   }
-  /* Each panel is a mini treasure-chest face. The full chest-frame.jpg is
-     used as a 9-slice border-image with fill, so iron corner brackets sit at
-     the 4 corners, the vertical straps with medallions stretch through the
-     center, and the wood between straps fills the panel body. A dark overlay
-     pseudo-element on top dims the center area enough for text legibility
-     while leaving the iron pristine. */
+  .eyebrow {
+    @apply text-[11px] uppercase tracking-[0.2em] font-display text-gold-500;
+  }
+
+  /* ─── Panels ───────────────────────────────────────────────────────
+     Two flavors:
+     .panel       — full chest-frame border-image (heavy, for hero containers).
+     .panel-iron  — lighter CSS-only iron rim with corner studs (for cards). */
   .panel {
     @apply text-ink-100;
     position: relative;
@@ -76,15 +105,46 @@ body {
     position: relative;
     z-index: 1;
   }
-  /* Tavern banner — a heavy iron strap, used along the top of the page
-     header so the menu/title sits on what looks like a metal nameplate. */
+
+  .panel-iron {
+    @apply text-ink-100 relative;
+    background-image: linear-gradient(180deg, rgba(58,36,24,.92), rgba(38,22,14,.92));
+    box-shadow:
+      0 0 0 1px rgba(0,0,0,.6),
+      0 0 0 2px rgba(217,168,90,.5),
+      inset 0 0 0 1px rgba(217,168,90,.18),
+      0 8px 24px rgba(0,0,0,.45);
+    border-radius: 2px;
+  }
+  /* Four iron studs at the corners */
+  .panel-iron::before,
+  .panel-iron::after {
+    content: '';
+    position: absolute;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #6b5436, #1a120a 70%);
+    box-shadow: 0 1px 1px rgba(0,0,0,.6);
+    pointer-events: none;
+  }
+  .panel-iron::before { top: 4px; left: 4px; }
+  .panel-iron::after  { top: 4px; right: 4px; }
+  /* Two more via inner pseudo wrapper — see <Panel> in src/ui/forged.tsx
+     for the React-friendly version that adds all four. */
+
   .iron-banner {
-    background-image: linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.55)),
-      url('/textures/metal.jpg');
-    background-size: cover, 800px;
-    background-position: center;
-    border-top: 2px solid #2a1f12;
-    border-bottom: 2px solid #2a1f12;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    background-image:
+      linear-gradient(180deg, #2a221b 0%, #1a140f 50%, #2a221b 100%),
+      repeating-linear-gradient(90deg, transparent 0 30px, rgba(255,255,255,.02) 30px 31px);
+    border-top: 2px solid #4a3d2a;
+    border-bottom: 2px solid #110a05;
+    box-shadow:
+      inset 0 -8px 12px rgba(0,0,0,.5),
+      inset 0 8px 12px rgba(255,255,255,.04),
+      0 2px 6px rgba(0,0,0,.5);
+  }
+
+  .divider-gold {
+    @apply h-px w-full bg-gold-500/25;
   }
 }
