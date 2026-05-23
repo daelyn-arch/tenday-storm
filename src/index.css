@@ -10,11 +10,10 @@ html, body, #root {
 
 body {
   @apply text-ink-100 font-body antialiased;
-  background-color: #2a1810;
-  background-image: linear-gradient(rgba(15, 8, 4, 0.35), rgba(15, 8, 4, 0.35)),
-    url('/textures/wood.jpg');
-  background-size: auto, 480px;
-  background-repeat: repeat, repeat;
+  /* Dark forge backdrop — matches .panel-iron / .iron-banner. */
+  background-color: #0a0705;
+  background-image: linear-gradient(180deg, #14100b 0%, #0a0705 55%, #060403 100%);
+  background-attachment: fixed;
   margin: 0;
 }
 
@@ -79,33 +78,12 @@ body {
   }
 
   /* ─── Panels ───────────────────────────────────────────────────────
-     Two flavors:
-     .panel       — full chest-frame border-image (heavy, for hero containers).
-     .panel-iron  — lighter CSS-only iron rim with corner studs (for cards). */
-  .panel {
-    @apply text-ink-100;
-    position: relative;
-    background-color: transparent;
-    border-style: solid;
-    border-width: 28px;
-    border-image-source: url('/textures/chest-frame.jpg');
-    border-image-slice: 120 fill;
-    border-image-repeat: stretch;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
-  }
-  .panel::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: rgba(20, 10, 4, 0.55);
-    pointer-events: none;
-    z-index: 0;
-  }
-  .panel > * {
-    position: relative;
-    z-index: 1;
-  }
-
+     .panel and .panel-iron now share the Forged-Iron treatment: a dark
+     gradient body with a gold rim and corner studs. (Previously .panel
+     used the chest-frame.jpg border-image — retired for a consistent look.)
+     .panel-iron stays as the alias the React <PanelIron> wraps for the
+     extra bottom studs. */
+  .panel,
   .panel-iron {
     @apply text-ink-100 relative;
     background-image: linear-gradient(180deg, rgba(58,36,24,.92), rgba(38,22,14,.92));
@@ -116,7 +94,9 @@ body {
       0 8px 24px rgba(0,0,0,.45);
     border-radius: 2px;
   }
-  /* Four iron studs at the corners */
+  /* Iron studs at the top corners (bottom two added by <PanelIron>) */
+  .panel::before,
+  .panel::after,
   .panel-iron::before,
   .panel-iron::after {
     content: '';
@@ -127,7 +107,9 @@ body {
     box-shadow: 0 1px 1px rgba(0,0,0,.6);
     pointer-events: none;
   }
+  .panel::before,
   .panel-iron::before { top: 4px; left: 4px; }
+  .panel::after,
   .panel-iron::after  { top: 4px; right: 4px; }
   /* Two more via inner pseudo wrapper — see <Panel> in src/ui/forged.tsx
      for the React-friendly version that adds all four. */

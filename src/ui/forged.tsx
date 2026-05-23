@@ -166,4 +166,8 @@ export const Icons = {
   Compass:(p: SVGProps<SVGSVGElement> & { size?: number }) => (<I {...p}><circle cx="12" cy="12" r="9" /><path d="M15.5 8.5 13 13l-4.5 2.5L11 11z" /></I>),
   Scroll: (p: SVGProps<SVGSVGElement> & { size?: number }) => (<I {...p}><path d="M7 4h11a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H7a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z M4 7h3 M20 17h-3" /></I>),
   Copy:   (p: SVGProps<SVGSVGElement> & { size?: number }) => (<I {...p}><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V6a2 2 0 0 1 2-2h9" /></I>),
+  Bag:    (p: SVGProps<SVGSVGElement> & { size?: number }) => (<I {...p}><path d="M6 8h12l1 12H5z M9 8V6a3 3 0 0 1 6 0v2" /></I>),
+  Map:    (p: SVGProps<SVGSVGElement> & { size?: number }) => (<I {...p}><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z M9 4v14 M15 6v14" /></I>),
+  Book:   (p: SVGProps<SVGSVGElement> & { size?: number }) => (<I {...p}><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z M18 18H7a2 2 0 0 0-2 2" /></I>),
+  Globe:  (p: SVGProps<SVGSVGElement> & { size?: number }) => (<I {...p}><circle cx="12" cy="12" r="9" /><path d="M3 12h18 M12 3a14 14 0 0 1 0 18 M12 3a14 14 0 0 0 0 18" /></I>),
 }

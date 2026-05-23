@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useCampaign } from '../store/campaign'
 import { HexMap, type Pin } from '../hex/HexMap'
@@ -16,15 +16,17 @@ import { Display, Eyebrow, DayRing, StatusPill, Icons } from '../ui/forged'
 
 type Tab = 'inspector' | 'quests' | 'rumors' | 'items' | 'encounters' | 'regions' | 'world' | 'journal'
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'inspector', label: 'Hex' },
-  { id: 'quests', label: 'Quests' },
-  { id: 'rumors', label: 'Rumors' },
-  { id: 'encounters', label: 'Encounters' },
-  { id: 'items', label: 'Items' },
-  { id: 'regions', label: 'Regions' },
-  { id: 'journal', label: 'Journal' },
-  { id: 'world', label: 'World' },
+type TabIcon = (p: { size?: number }) => ReactElement
+
+const TABS: { id: Tab; label: string; Icon: TabIcon }[] = [
+  { id: 'inspector', label: 'Hex', Icon: Icons.Hex },
+  { id: 'quests', label: 'Quests', Icon: Icons.Scroll },
+  { id: 'rumors', label: 'Rumors', Icon: Icons.Eye },
+  { id: 'encounters', label: 'Encounters', Icon: Icons.Sword },
+  { id: 'items', label: 'Items', Icon: Icons.Bag },
+  { id: 'regions', label: 'Regions', Icon: Icons.Map },
+  { id: 'journal', label: 'Journal', Icon: Icons.Book },
+  { id: 'world', label: 'World', Icon: Icons.Globe },
 ]
 
 export function DmView() {
@@ -157,22 +159,28 @@ export function DmView() {
           />
         </main>
         <aside className="border-l border-ink-700 flex flex-col min-h-0">
-          <nav className="flex border-b border-ink-700 overflow-x-auto" role="tablist" aria-label="Campaign panels">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                role="tab"
-                aria-selected={tab === t.id}
-                onClick={() => setTab(t.id)}
-                className={`px-3 py-2.5 text-xs font-display uppercase tracking-wider border-r border-ink-700 whitespace-nowrap min-h-[40px] transition-colors ${
-                  tab === t.id
-                    ? 'bg-storm-700/60 text-ink-50 border-t-2 border-t-gold-500 -mt-px'
-                    : 'text-ink-300 hover:text-ink-100'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+          <nav className="flex border-b border-ink-700" role="tablist" aria-label="Campaign panels">
+            {TABS.map((t) => {
+              const active = tab === t.id
+              return (
+                <button
+                  key={t.id}
+                  role="tab"
+                  aria-selected={active}
+                  aria-label={t.label}
+                  title={t.label}
+                  onClick={() => setTab(t.id)}
+                  className={`inline-flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-display uppercase tracking-wider border-r border-ink-700 whitespace-nowrap min-h-[40px] transition-colors ${
+                    active
+                      ? 'flex-1 bg-storm-700/60 text-ink-50 border-t-2 border-t-gold-500 -mt-px'
+                      : 'text-ink-300 hover:text-ink-100'
+                  }`}
+                >
+                  <t.Icon size={15} />
+                  {active && <span>{t.label}</span>}
+                </button>
+              )
+            })}
           </nav>
           <div className="flex-1 min-h-0">
             {tab === 'inspector' && <HexInspector />}
